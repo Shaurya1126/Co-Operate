@@ -7,7 +7,6 @@ Usage:
     pip install fastapi uvicorn python-multipart
     uvicorn api:app --reload --port 8000
 """
-DATA_DIR = os.getenv("DATA_DIR", ".")
 
 import os
 import sys
@@ -37,6 +36,7 @@ from fastapi.staticfiles     import StaticFiles
 from pydantic                import BaseModel
 from dotenv import load_dotenv
 load_dotenv()
+DATA_DIR = os.getenv("DATA_DIR", ".")
 
 sys.path.insert(0, os.path.dirname(__file__))
 from report_generator import (
