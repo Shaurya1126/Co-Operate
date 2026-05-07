@@ -7,6 +7,7 @@ Usage:
     pip install fastapi uvicorn python-multipart
     uvicorn api:app --reload --port 8000
 """
+DATA_DIR = os.getenv("DATA_DIR", ".")
 
 import os
 import sys
@@ -193,8 +194,8 @@ def collect_streaming(season: str, year: int):
     Generator that yields SSE-formatted strings while scraping.
     Used by /api/scrape-stream/{season}.
     """
-    parquet_path = f"jobs_{season.lower()}_{year}.parquet"
-    legacy_path  = f"jobs_{season.lower()}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
+    legacy_path  = os.path.join(DATA_DIR, f"jobs_{season.lower()}.parquet")
 
     # Migrate legacy parquet (no year in name) to year-aware name if it exists and new one doesn't
     if not os.path.exists(parquet_path) and os.path.exists(legacy_path):
@@ -322,7 +323,7 @@ def get_processed_jobs(season: str, year: int = None) -> dict:
     Raises 404 if no parquet exists -- caller must scrape first.
     """
     cache_key    = f"{season}_{year}" if year else season
-    parquet_path = f"jobs_{season.lower()}_{year}.parquet" if year else f"jobs_{season.lower()}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet") if year else os.path.join(DATA_DIR, f"jobs_{season.lower()}.parquet")
 
     print(f"DEBUG get_processed_jobs called with season='{season}' year='{year}' path='{parquet_path}'")
     if cache_key in _job_cache:
@@ -386,7 +387,7 @@ def health():
 @app.get("/api/debug/{season}")
 def debug_season(season: str):
     season = season.capitalize()
-    parquet_path = f"jobs_{season.lower()}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}.parquet")
     df = pd.read_parquet(parquet_path)
     return {
         "file": parquet_path,
