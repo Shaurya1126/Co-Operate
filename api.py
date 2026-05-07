@@ -280,7 +280,7 @@ def get_resources(season: str, year: int):
 def get_available_dates(season: str, year: int):
     """Returns the list of scraped dates available in the dataset."""
     season = season.capitalize()
-    parquet_path = f"jobs_{season.lower()}_{year}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
     if not os.path.exists(parquet_path):
         return {"season": season, "dates": []}
     df = pd.read_parquet(parquet_path)
@@ -292,7 +292,7 @@ def get_available_dates(season: str, year: int):
 @app.get("/api/jobs/{season}/{year}/{date}")
 def get_jobs_by_date(season: str, year: int, date: str):
     season = season.capitalize()
-    parquet_path = f"jobs_{season.lower()}_{year}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
     if not os.path.exists(parquet_path):
         raise HTTPException(404, "No data for this season.")
     df = pd.read_parquet(parquet_path)
