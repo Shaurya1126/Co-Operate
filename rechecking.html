@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Co-op Readiness Analyzer</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --navy:   #0f1f3d;
+  --blue:   #1a3a5c;
+  --accent: #2563eb;
+  --teal:   #0ea5e9;
+  --green:  #10b981;
+  --red:    #ef4444;
+  --gold:   #f59e0b;
+  --bg:     #f8fafc;
+  --card:   #ffffff;
+  --border: #e2e8f0;
+  --text:   #1e293b;
+  --muted:  #64748b;
+  --radius: 14px;
+  --shadow: 0 4px 24px rgba(15,31,61,0.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* HEADER */
+header { background: var(--navy); padding: 0 2rem; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.header-inner { max-width: 1200px; margin: 0 auto; height: 64px; display: flex; align-items: center; justify-content: space-between; }
+.logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.25rem; color: white; letter-spacing: -0.02em; }
+.logo span { color: var(--teal); }
+nav { display: flex; gap: 0.25rem; }
+nav button { background: none; border: none; color: rgba(255,255,255,0.6); padding: 0.5rem 1rem; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; }
+nav button:hover, nav button.active { background: rgba(255,255,255,0.1); color: white; }
+
+/* SEASON BAR */
+.season-bar { background: var(--blue); padding: 0.625rem 2rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.season-bar-inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; gap: 1rem; }
+.season-bar-label { color: rgba(255,255,255,0.5); font-size: 0.8rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+.season-pills { display: flex; gap: 0.5rem; }
+.season-pill { padding: 0.35rem 1rem; border-radius: 100px; border: 1.5px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.7); font-size: 0.8rem; cursor: pointer; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
+.season-pill:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.3); }
+.season-pill.active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 500; }
+
+/* MAIN */
+main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+.section { display: none; }
+.section.active { display: block; }
+
+/* CARDS */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.75rem; box-shadow: var(--shadow); }
+.card-title { font-family: 'Syne', sans-serif; font-size: 1.05rem; font-weight: 700; color: var(--navy); margin-bottom: 1.25rem; }
+
+/* GRID */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 1.5rem; }
+@media(max-width:768px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } }
+
+/* STATS */
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; text-align: center; }
+.stat-number { font-family: 'Syne', sans-serif; font-size: 2.5rem; font-weight: 800; color: var(--accent); line-height: 1; margin-bottom: 0.25rem; }
+.stat-label { color: var(--muted); font-size: 0.875rem; }
+
+/* SKILL BARS */
+.skill-bar-item { margin-bottom: 0.875rem; }
+.skill-bar-header { display: flex; justify-content: space-between; font-size: 0.875rem; margin-bottom: 0.3rem; font-weight: 500; }
+.skill-bar-track { height: 8px; background: var(--border); border-radius: 100px; overflow: hidden; }
+.skill-bar-fill { height: 100%; border-radius: 100px; transition: width 0.8s cubic-bezier(0.4,0,0.2,1); }
+.skill-bar-fill.tech { background: linear-gradient(90deg, var(--accent), var(--teal)); }
+.skill-bar-fill.soft { background: linear-gradient(90deg, var(--green), #34d399); }
+
+/* TRENDS */
+.trend-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: 10px; margin-bottom: 0.5rem; border: 1px solid var(--border); }
+.trend-up   { background: #f0fdf4; border-color: #bbf7d0; }
+.trend-down { background: #fff1f2; border-color: #fecdd3; }
+.trend-badge { font-family: 'Syne', sans-serif; font-size: 0.8rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 100px; }
+.trend-badge.up   { background: var(--green); color: white; }
+.trend-badge.down { background: var(--red);   color: white; }
+
+/* JOB CARDS */
+.job-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 0.875rem; display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; transition: box-shadow 0.2s, border-color 0.2s; }
+.job-card:hover { box-shadow: var(--shadow); border-color: var(--accent); }
+.job-title { font-weight: 600; font-size: 0.95rem; color: var(--navy); margin-bottom: 0.25rem; }
+.job-meta { color: var(--muted); font-size: 0.8rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+.job-tag { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 500; }
+.tag-remote { background: #eff6ff; color: var(--accent); }
+.tag-onsite { background: #f8fafc; color: var(--muted); }
+.fit-score { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.3rem; text-align: right; }
+.fit-tier { font-size: 0.75rem; color: var(--muted); text-align: right; }
+
+/* FORM */
+.form-group { margin-bottom: 1.25rem; }
+label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--navy); margin-bottom: 0.4rem; }
+input, select { width: 100%; padding: 0.65rem 0.875rem; border: 1.5px solid var(--border); border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 0.9rem; color: var(--text); background: white; transition: border-color 0.2s; outline: none; }
+input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+
+/* CHIPS */
+.chip-container { display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 44px; padding: 0.5rem; border: 1.5px solid var(--border); border-radius: 10px; background: white; cursor: text; }
+.chip-container:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; background: var(--accent); color: white; padding: 0.25rem 0.6rem; border-radius: 100px; font-size: 0.78rem; font-weight: 500; }
+.chip.soft-chip { background: var(--green); }
+.chip-remove { background: none; border: none; color: rgba(255,255,255,0.8); cursor: pointer; padding: 0; font-size: 1rem; line-height: 1; display: flex; align-items: center; }
+.chip-input { border: none; outline: none; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; min-width: 120px; flex: 1; padding: 0.1rem 0.2rem; }
+
+/* UPLOAD */
+.upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 2.5rem; text-align: center; cursor: pointer; transition: all 0.2s; background: #fafbfc; }
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: #eff6ff; }
+.upload-text { color: var(--muted); font-size: 0.9rem; }
+.upload-text strong { color: var(--accent); }
+#resume-input { display: none; }
+
+/* BUTTONS */
+.btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: all 0.2s; border: none; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(37,99,235,0.3); }
+.btn-secondary { background: var(--border); color: var(--text); }
+.btn-secondary:hover { background: #cbd5e1; }
+.btn-success { background: var(--green); color: white; }
+.btn-success:hover { background: #059669; transform: translateY(-1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+.btn-lg { padding: 1rem 2rem; font-size: 1rem; border-radius: 12px; }
+.btn-full { width: 100%; justify-content: center; }
+
+/* PROGRESS STEPS */
+.progress-steps { display: flex; margin-bottom: 2rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.progress-step { flex: 1; padding: 1rem; text-align: center; font-size: 0.8rem; color: var(--muted); border-right: 1px solid var(--border); }
+.progress-step:last-child { border-right: none; }
+.progress-step.active { color: var(--accent); font-weight: 600; background: #eff6ff; }
+.progress-step.done { color: var(--green); background: #f0fdf4; }
+.step-num { display: block; font-family: 'Syne', sans-serif; font-size: 1.2rem; font-weight: 800; margin-bottom: 0.2rem; }
+
+/* ALERTS */
+.alert { padding: 0.875rem 1.125rem; border-radius: 10px; font-size: 0.875rem; margin-bottom: 1rem; }
+.alert-info    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.alert-success { background: #f0fdf4; color: #065f46; border: 1px solid #bbf7d0; }
+.alert-error   { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
+
+/* SCRAPE LOG */
+.scrape-log { background: #0d1117; border-radius: var(--radius); padding: 1.25rem 1.5rem; font-family: 'Courier New', monospace; font-size: 0.82rem; color: #c9d1d9; max-height: 280px; overflow-y: auto; border: 1px solid #30363d; }
+.scrape-log-line { line-height: 1.8; }
+.scrape-log-line.ok     { color: #3fb950; }
+.scrape-log-line.info   { color: #58a6ff; }
+.scrape-log-line.dim    { color: #8b949e; }
+.scrape-log-line.error  { color: #f85149; }
+.scrape-progress { margin-top: 0.875rem; }
+.scrape-progress-bar-track { height: 6px; background: #30363d; border-radius: 100px; overflow: hidden; margin-top: 0.4rem; }
+.scrape-progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--teal)); border-radius: 100px; transition: width 0.4s ease; }
+
+/* LOADING OVERLAY */
+.loading-overlay { position: fixed; inset: 0; background: rgba(15,31,61,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(4px); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+.loading-overlay.visible { opacity: 1; pointer-events: all; }
+.loading-box { background: white; border-radius: 16px; padding: 2rem 2.5rem; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.loading-box .big-spinner { width: 48px; height: 48px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
+.loading-box p { color: var(--muted); font-size: 0.9rem; margin-top: 0.5rem; }
+
+/* MISC */
+@keyframes spin { to { transform: rotate(360deg); } }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+.section-title { font-family: 'Syne', sans-serif; font-size: 1.5rem; font-weight: 700; color: var(--navy); }
+.mt-4 { margin-top: 1rem; }
+.mt-8 { margin-top: 2rem; }
+.mb-4 { margin-bottom: 1rem; }
+.text-muted { color: var(--muted); font-size: 0.875rem; }
+.gap { gap: 1.5rem; }
+.download-banner { background: linear-gradient(135deg, var(--navy), var(--blue)); border-radius: var(--radius); padding: 2rem; text-align: center; color: white; margin-top: 1.5rem; }
+.download-banner h3 { font-family: 'Syne', sans-serif; font-size: 1.3rem; font-weight: 700; margin-bottom: 0.5rem; }
+.download-banner p { color: rgba(255,255,255,0.7); margin-bottom: 1.25rem; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading-overlay">
+  <div class="loading-box">
+    <div class="big-spinner"></div>
+    <strong id="loading-title">Processing...</strong>
+    <p id="loading-msg">This may take a moment</p>
+  </div>
+</div>
+
+<!-- Header -->
+<header>
+  <div class="header-inner">
+    <div class="logo">Co-op<span>IQ</span></div>
+    <nav>
+      <button class="active" onclick="showSection('dashboard', this)">Dashboard</button>
+      <button onclick="showSection('jobs', this)">Browse Jobs</button>
+      <button onclick="showSection('insights', this)">Insights</button>
+      <button onclick="showSection('report', this)">Generate Report</button>
+    </nav>
+  </div>
+</header>
+
+<!-- Season bar — always visible -->
+<div class="season-bar">
+  <div class="season-bar-inner">
+    <span class="season-bar-label">Season</span>
+    <div class="season-pills">
+      <div class="season-pill active" onclick="selectSeason('Summer', this)">Summer 2026</div>
+      <div class="season-pill" onclick="selectSeason('Fall', this)">Fall 2026</div>
+      <div class="season-pill" onclick="selectSeason('Winter', this)">Winter 2026</div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<!-- ═══════ DASHBOARD ═══════ -->
+<div class="section active" id="section-dashboard">
+
+  <!-- Scrape log (shown when fetching) -->
+  <div id="scrape-panel" style="display:none" class="card mt-4 mb-4">
+    <div class="card-title" id="scrape-panel-title">Fetching jobs...</div>
+    <div class="scrape-log" id="scrape-log"></div>
+    <div class="scrape-progress">
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--muted)">
+        <span id="scrape-progress-label">Starting...</span>
+        <span id="scrape-progress-pct">0%</span>
+      </div>
+      <div class="scrape-progress-bar-track">
+        <div class="scrape-progress-bar-fill" id="scrape-progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="dashboard-content" style="display:none">
+    <div class="section-header mt-4">
+      <div class="section-title" id="dashboard-title">Market Overview</div>
+      <button class="btn btn-secondary" onclick="loadDashboard(true)">Refresh</button>
+    </div>
+
+    <div class="grid-3 mb-4">
+      <div class="stat-card"><div class="stat-number" id="stat-jobs">—</div><div class="stat-label">Jobs Scraped</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-skills">—</div><div class="stat-label">Skills Tracked</div></div>
+      <div class="stat-card"><div class="stat-number" id="stat-roles">—</div><div class="stat-label">Role Categories</div></div>
+    </div>
+
+    <div class="grid-2 gap">
+      <div class="card"><div class="card-title">Top Technical Skills</div><div id="tech-skills-list"></div></div>
+      <div class="card"><div class="card-title">Top Soft Skills</div><div id="soft-skills-list"></div></div>
+    </div>
+
+    <div class="card mt-8">
+      <div class="card-title">Trending Skills — Last 30 Days</div>
+      <div id="trends-container">
+        <div class="alert alert-info">Trend data requires at least 2 days of scrapes. Run the tool daily and trends will appear automatically.</div>
+      </div>
+    </div>
+  </div>
+  <div class="card mt-8">
+      <div class="card-title">Learning Resources — Rising Skills</div>
+      <div id="resources-container">
+        <div class="alert alert-info">Resources will appear once trend data is available.</div>
+      </div>
+  </div>
+
+</div>
+
+<!-- ═══════ INSIGHTS ═══════ -->
+<div class="section" id="section-insights">
+
+  <div id="insights-scrape-panel" style="display:none" class="card mt-4 mb-4">
+    <div class="card-title" id="insights-scrape-title">Fetching jobs...</div>
+    <div class="scrape-log" id="insights-scrape-log"></div>
+    <div class="scrape-progress">
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--muted)">
+        <span id="insights-progress-label">Starting...</span>
+        <span id="insights-progress-pct">0%</span>
+      </div>
+      <div class="scrape-progress-bar-track">
+        <div class="scrape-progress-bar-fill" id="insights-progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="insights-content" style="display:none">
+    <div class="section-header mt-4">
+      <div class="section-title" id="insights-title">Market Insights</div>
+      <button class="btn btn-secondary" onclick="loadInsights(true)">Refresh</button>
+    </div>
+
+    <!-- Metric row -->
+    <div class="grid-3 mb-4" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat-card"><div class="stat-number" id="ins-jobs">—</div><div class="stat-label">Jobs scraped</div></div>
+      <div class="stat-card"><div class="stat-number" id="ins-remote">—</div><div class="stat-label">Remote roles</div></div>
+      <div class="stat-card"><div class="stat-number" id="ins-roles">—</div><div class="stat-label">Role categories</div></div>
+      <div class="stat-card"><div class="stat-number" id="ins-companies">—</div><div class="stat-label">Unique companies</div></div>
+    </div>
+
+    <!-- Row 1: Donut + Remote stacked bar -->
+    <div class="grid-2 gap mb-4">
+      <div class="card">
+        <div class="card-title">Role distribution</div>
+        <div id="donut-legend" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;font-size:0.75rem;color:var(--muted)"></div>
+        <div style="position:relative;width:100%;height:220px;">
+          <canvas id="donutChart" role="img" aria-label="Donut chart of job role distribution"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Remote vs on-site by role</div>
+        <div style="display:flex;gap:1rem;margin-bottom:0.75rem;font-size:0.75rem;color:var(--muted)">
+          <span style="display:flex;align-items:center;gap:0.3rem"><span style="width:10px;height:10px;border-radius:2px;background:var(--accent);display:inline-block"></span>Remote</span>
+          <span style="display:flex;align-items:center;gap:0.3rem"><span style="width:10px;height:10px;border-radius:2px;background:var(--muted);display:inline-block"></span>On-site</span>
+        </div>
+        <div style="position:relative;width:100%;height:220px;">
+          <canvas id="remoteChart" role="img" aria-label="Stacked bar chart of remote versus on-site jobs per role category"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Skill demand full width -->
+    <div class="card mt-8 mb-4">
+      <div class="card-title">Skill demand</div>
+      <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">How often each skill appears across all job postings</p>
+      <div style="display:flex;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap">
+        <select id="skill-type-filter" onchange="renderInsightSkills()" style="width:auto">
+          <option value="all">All skills</option>
+          <option value="technical">Technical only</option>
+          <option value="soft">Soft only</option>
+        </select>
+        <select id="skill-count-filter" onchange="renderInsightSkills()" style="width:auto">
+          <option value="10">Top 10</option>
+          <option value="15">Top 15</option>
+          <option value="20">Top 20</option>
+        </select>
+      </div>
+      <div id="insight-skill-bars"></div>
+    </div>
+
+    <!-- Row 3: Companies + Timeline -->
+    <div class="grid-2 gap mb-4">
+      <div class="card">
+        <div class="card-title">Top hiring companies</div>
+        <div style="position:relative;width:100%;height:260px;">
+          <canvas id="companyChart" role="img" aria-label="Horizontal bar chart of companies with most job postings"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Jobs posted over time</div>
+        <div style="position:relative;width:100%;height:260px;">
+          <canvas id="timeChart" role="img" aria-label="Line chart of jobs posted per day"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 4: Fit score distribution -->
+    <div class="card mt-8">
+      <div class="card-title">Fit score distribution</div>
+      <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">How many jobs fall into each match tier — updates after you run a report</p>
+      <div style="position:relative;width:100%;height:180px;">
+        <canvas id="fitChart" role="img" aria-label="Bar chart of job count per fit score tier"></canvas>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ═══════ JOBS ═══════ -->
+<div class="section" id="section-jobs">
+
+  <div id="jobs-scrape-panel" style="display:none" class="card mt-4 mb-4">
+    <div class="card-title" id="jobs-scrape-title">Fetching jobs...</div>
+    <div class="scrape-log" id="jobs-scrape-log"></div>
+    <div class="scrape-progress">
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--muted)">
+        <span id="jobs-progress-label">Starting...</span>
+        <span id="jobs-progress-pct">0%</span>
+      </div>
+      <div class="scrape-progress-bar-track">
+        <div class="scrape-progress-bar-fill" id="jobs-progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="jobs-content" style="display:none">
+    <div class="section-header mt-4">
+      <div class="section-title" id="jobs-title">Browse Jobs</div>
+      <div style="display:flex;gap:0.75rem;align-items:center">
+        <input type="text" id="job-search" placeholder="Search title or company..." style="width:220px" oninput="filterJobs()"/>
+        <select id="job-role-filter" onchange="filterJobs()" style="width:180px">
+          <option value="">All Roles</option>
+        </select>
+      </div>
+    </div>
+    <div id="jobs-list"></div>
+    <div id="jobs-load-more" style="text-align:center;margin-top:1.5rem;display:none">
+      <button class="btn btn-secondary" onclick="showMoreJobs()">Load More</button>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ═══════ REPORT ═══════ -->
+<div class="section" id="section-report">
+  <div id="report-scrape-panel" style="display:none" class="card mt-4 mb-4">
+    <div class="card-title" id="report-scrape-title">Fetching jobs...</div>
+    <div class="scrape-log" id="report-scrape-log"></div>
+    <div class="scrape-progress">
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--muted)">
+        <span id="report-progress-label">Starting...</span>
+        <span id="report-progress-pct">0%</span>
+      </div>
+      <div class="scrape-progress-bar-track">
+        <div class="scrape-progress-bar-fill" id="report-progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="report-form-content" style="display:none">
+
+    <div class="section-header mt-4">
+      <div class="section-title">Generate Your Report</div>
+    </div>
+
+    <div class="progress-steps" id="progress-steps">
+      <div class="progress-step active" id="step-1"><span class="step-num">1</span>Upload Resume</div>
+      <div class="progress-step" id="step-2"><span class="step-num">2</span>Your Details</div>
+      <div class="progress-step" id="step-3"><span class="step-num">3</span>Review Skills</div>
+      <div class="progress-step" id="step-4"><span class="step-num">4</span>Get Report</div>
+    </div>
+
+    <!-- Step 1 -->
+    <div id="form-step-1">
+      <div class="card">
+        <div class="card-title">Upload Your Resume</div>
+        <div class="upload-zone" id="upload-zone"
+             onclick="document.getElementById('resume-input').click()"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)"
+             ondrop="handleDrop(event)">
+          <div style="font-size:2rem;margin-bottom:0.75rem">PDF</div>
+          <div class="upload-text"><strong>Click to upload</strong> or drag and drop your resume<br>PDF, DOCX, or TXT supported</div>
+          <div id="upload-filename" style="margin-top:0.75rem;font-weight:500;color:var(--accent)"></div>
+        </div>
+        <input type="file" id="resume-input" accept=".pdf,.docx,.txt" onchange="handleFileSelect(event)"/>
+        <div id="resume-parsed-result" style="display:none" class="mt-4">
+          <div class="alert alert-success" id="resume-alert"></div>
+        </div>
+        <div style="display:flex;gap:1rem;margin-top:1.25rem;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="skipResume()">Skip — enter manually</button>
+          <button class="btn btn-primary" id="btn-parse" onclick="parseResume()" disabled>Parse Resume</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div id="form-step-2" style="display:none">
+      <div class="card">
+        <div class="card-title">Your Details</div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="f-name" placeholder="Alex Johnson"/>
+          </div>
+          <div class="form-group">
+            <label>Year of Study</label>
+            <select id="f-year">
+              <option value="1">1st Year</option>
+              <option value="2" selected>2nd Year</option>
+              <option value="3">3rd Year</option>
+              <option value="4">4th Year</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>University</label>
+            <input type="text" id="f-university" list="uni-list" placeholder="University of Waterloo"/>
+            <datalist id="uni-list"></datalist>
+          </div>
+          <div class="form-group">
+            <label>Degree</label>
+            <select id="f-degree"></select>
+          </div>
+        </div>
+        <div style="display:flex;gap:1rem;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+          <button class="btn btn-primary" onclick="goToStep(3)">Review Skills</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div id="form-step-3" style="display:none">
+      <div class="card">
+        <div class="card-title">Your Skills</div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>Technical Skills</label>
+            <div class="chip-container" id="tech-chips" onclick="focusTechInput()">
+              <input class="chip-input" id="tech-chip-input" placeholder="Type a skill, press Enter..." onkeydown="handleChipKey(event,'tech')"/>
+            </div>
+            <div class="text-muted mt-4">e.g. Python, SQL, Git, Docker, React</div>
+          </div>
+          <div class="form-group">
+            <label>Soft Skills</label>
+            <div class="chip-container" id="soft-chips" onclick="focusSoftInput()">
+              <input class="chip-input" id="soft-chip-input" placeholder="Type a skill, press Enter..." onkeydown="handleChipKey(event,'soft')"/>
+            </div>
+            <div class="text-muted mt-4">e.g. Communication, Leadership, Teamwork</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:1rem;justify-content:flex-end;margin-top:1rem">
+          <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+          <button class="btn btn-primary btn-lg" onclick="generateReport()">Generate My Report</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div id="form-step-4" style="display:none">
+      <div class="download-banner">
+        <h3>Your Report is Ready</h3>
+        <p id="report-summary-text"></p>
+        <a id="download-link" href="#" target="_blank">
+          <button class="btn btn-success btn-lg">Download PDF Report</button>
+        </a>
+      </div>
+      <div class="card mt-8">
+        <div class="card-title">Your Top Job Matches</div>
+        <div id="match-results"></div>
+      </div>
+      <div style="text-align:center;margin-top:1.5rem">
+        <button class="btn btn-secondary" onclick="resetForm()">Start Over</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const API = 'http://localhost:8000';
+
+let currentSeason = 'Summer';
+let allJobs       = [];
+let shownJobs     = 0;
+let techSkills    = [];
+let softSkills    = [];
+
+// Track which seasons are already loaded in memory cache
+const loadedSeasons = new Set();
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+// Replace the hardcoded season pills with dynamic ones
+async function init() {
+  try {
+    const meta = await fetch(`${API}/api/meta`).then(r => r.json());
+    const degSel = document.getElementById('f-degree');
+    meta.degrees.forEach(d => {
+      const o = document.createElement('option');
+      o.value = o.textContent = d;
+      degSel.appendChild(o);
+    });
+    const uniList = document.getElementById('uni-list');
+    meta.universities.forEach(u => {
+      const o = document.createElement('option');
+      o.value = u;
+      uniList.appendChild(o);
+    });
+  } catch(e) { console.warn('Meta load failed:', e); }
+
+  // ── Load dynamic seasons ──────────────────────────────────────────────────
+  try {
+    const { seasons } = await fetch(`${API}/api/seasons`).then(r => r.json());
+    window.seasonData = seasons;  // [{ season, year, label }, ...]
+
+    const pillContainer = document.querySelector('.season-pills');
+    pillContainer.innerHTML = '';
+    seasons.forEach((s, i) => {
+      const pill = document.createElement('div');
+      pill.className = `season-pill${i === 0 ? ' active' : ''}`;
+      pill.textContent = s.label;
+      pill.onclick = () => selectSeason(s.season, s.year, pill);
+      pillContainer.appendChild(pill);
+    });
+
+    // Set default season to first upcoming
+    currentSeason     = seasons[0].season;
+    currentSeasonYear = seasons[0].year;
+  } catch(e) { console.warn('Season load failed:', e); }
+
+  loadDashboard();
+}
+
+// ── SEASON ───────────────────────────────────────────────────────────────────
+let currentSeasonYear = 2026;  // ← add this
+
+function selectSeason(season, year, el) {
+  // Check if user is on the report section and has started the form
+  const reportActive = document.querySelector('.section.active')?.id === 'section-report';
+  const formStarted  = document.getElementById('report-form-content').style.display !== 'none';
+
+  if (reportActive && formStarted) {
+    const confirmed = confirm(
+      `Switching seasons requires restarting the report generator.\n\n` +
+      `Your current progress will be lost. Switch to ${season} ${year}?`
+    );
+    if (!confirmed) return;  // user cancelled — don't switch
+
+    // Reset the form back to step 1
+    resetForm();
+  }
+
+  currentSeason     = season;
+  currentSeasonYear = year;
+  document.querySelectorAll('.season-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+
+  const active = document.querySelector('.section.active');
+  if (!active) return;
+  const id = active.id;
+  if (id === 'section-dashboard') loadDashboard();
+  else if (id === 'section-insights') loadInsights();
+  else if (id === 'section-jobs')  loadJobs();
+  else if (id === 'section-report') ensureDataForReport();
+}
+
+// ── NAV ───────────────────────────────────────────────────────────────────────
+function showSection(name, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById(`section-${name}`).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (name === 'jobs')   loadJobs();
+  if (name === 'insights') loadInsights();
+  if (name === 'report') ensureDataForReport();
+}
+
+// ── LOADING ───────────────────────────────────────────────────────────────────
+function showLoading(title, msg) {
+  document.getElementById('loading-title').textContent = title;
+  document.getElementById('loading-msg').textContent   = msg || '';
+  document.getElementById('loading-overlay').classList.add('visible');
+}
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.remove('visible');
+}
+
+// ── SCRAPE WITH LIVE LOG ──────────────────────────────────────────────────────
+function scrapeWithLog(season, logId, panelId, panelTitleId,
+                        progressLabelId, progressPctId, progressFillId) {
+  return new Promise((resolve, reject) => {
+    document.getElementById(panelId).style.display = 'block';
+    document.getElementById(panelTitleId).textContent =
+      `Fetching ${season} ${currentSeasonYear} jobs...`;
+
+    const log = document.getElementById(logId);
+    log.innerHTML = '';
+
+    function addLine(text, cls = '') {
+      const d = document.createElement('div');
+      d.className = `scrape-log-line ${cls}`;
+      d.textContent = text;
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    const es = new EventSource(`${API}/api/scrape-stream/${season}/${currentSeasonYear}`);
+
+    es.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+
+      if (msg.type === 'cached') {
+        addLine(msg.msg, 'ok');
+        document.getElementById(progressFillId).style.width = '100%';
+        document.getElementById(progressPctId).textContent  = '100%';
+        document.getElementById(progressLabelId).textContent = 'Loaded from cache';
+        es.close();
+        loadedSeasons.add(season);
+        resolve();
+      }
+
+      else if (msg.type === 'query') {
+        addLine(msg.msg, 'info');
+      }
+
+      else if (msg.type === 'page') {
+        const pct = Math.round((msg.page / msg.total_pages) * 100);
+        addLine(
+          `  Fetching page ${msg.page}/${msg.total_pages}... got ${msg.count} jobs` +
+          (msg.total ? `  [total so far: ${msg.total}]` : ''),
+          msg.count > 0 ? 'ok' : 'dim'
+        );
+        document.getElementById(progressFillId).style.width  = pct + '%';
+        document.getElementById(progressPctId).textContent   = pct + '%';
+        document.getElementById(progressLabelId).textContent =
+          `Page ${msg.page} of ${msg.total_pages}`;
+      }
+
+      else if (msg.type === 'building') {
+        addLine(msg.msg, 'info');
+        document.getElementById(progressFillId).style.width = '90%';
+      }
+
+      else if (msg.type === 'done') {
+        addLine(msg.msg, 'ok');
+        addLine('Ready.', 'ok');
+        document.getElementById(progressFillId).style.width = '100%';
+        document.getElementById(progressPctId).textContent  = '100%';
+        document.getElementById(progressLabelId).textContent = 'Complete';
+        es.close();
+        loadedSeasons.add(season);
+        resolve();
+      }
+
+      else if (msg.type === 'error') {
+        addLine('Error: ' + msg.msg, 'error');
+        es.close();
+        reject(new Error(msg.msg));
+      }
+    };
+
+    es.onerror = () => {
+      addLine('Connection error — check that the API is running.', 'error');
+      es.close();
+      reject(new Error('SSE connection failed'));
+    };
+  });
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+async function loadDashboard(forceRefresh = false) {
+  document.getElementById('dashboard-content').style.display = 'none';
+
+  if (!loadedSeasons.has(currentSeason) || forceRefresh) {
+    try {
+      await scrapeWithLog(
+        currentSeason,
+        'scrape-log', 'scrape-panel', 'scrape-panel-title',
+        'scrape-progress-label', 'scrape-progress-pct', 'scrape-progress-fill'
+      );
+    } catch(e) {
+      console.error(e);
+      return;
+    }
+  } else {
+    document.getElementById('scrape-panel').style.display = 'none';
+  }
+
+  showLoading('Loading market data...');
+  try {
+    const jobsRes      = await fetch(`${API}/api/jobs/${currentSeason}`).then(r => r.json());
+    const skillsRes    = await fetch(`${API}/api/skills/${currentSeason}`).then(r => r.json());
+    const trendsRes    = await fetch(`${API}/api/trends/${currentSeason}`).then(r => r.json());
+    const resourcesRes = await fetch(`${API}/api/resources/${currentSeason}`).then(r => r.json());
+
+    document.getElementById('dashboard-title').textContent =
+      `${currentSeason} ${currentSeasonYear} — Market Overview`;
+    document.getElementById('stat-jobs').textContent   = jobsRes.total;
+    document.getElementById('stat-skills').textContent =
+      skillsRes.technical.length + skillsRes.soft.length;
+    document.getElementById('stat-roles').textContent  =
+      new Set(jobsRes.jobs.map(j => j.role_category)).size;
+
+    renderSkillBars('tech-skills-list', skillsRes.technical, 'tech');
+    renderSkillBars('soft-skills-list', skillsRes.soft, 'soft');
+
+    if (trendsRes.available && trendsRes.trends.length) {
+      renderTrends(trendsRes.trends);
+    } else {
+      document.getElementById('trends-container').innerHTML =
+        '<div class="alert alert-info">Trend data requires at least 2 days of scrapes. Run the tool daily and trends will appear automatically.</div>';
+    }
+    if (resourcesRes.available) {
+      renderResources(resourcesRes.resources);
+    } else {
+      document.getElementById('resources-container').innerHTML =
+        '<div class="alert alert-info">Resources will appear once trend data is available (requires 2+ days of scrapes).</div>';
+    }
+
+    document.getElementById('scrape-panel').style.display    = 'none';
+    document.getElementById('dashboard-content').style.display = 'block';
+  } catch(e) {
+    console.error(e);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderSkillBars(containerId, skills, type) {
+  const el  = document.getElementById(containerId);
+  const max = skills[0]?.demand_pct || 1;
+  el.innerHTML = skills.map(s => `
+    <div class="skill-bar-item">
+      <div class="skill-bar-header">
+        <span>${s.skill}</span>
+        <span style="color:var(--muted)">${s.demand_pct}%</span>
+      </div>
+      <div class="skill-bar-track">
+        <div class="skill-bar-fill ${type}" style="width:${(s.demand_pct/max*100)}%"></div>
+      </div>
+    </div>`).join('');
+}
+
+function renderTrends(trends) {
+  const rising  = trends.filter(t => t.change > 0).slice(0, 6);
+  const falling = trends.filter(t => t.change < 0).slice(0, 6);
+  const el      = document.getElementById('trends-container');
+  if (!rising.length && !falling.length) {
+    el.innerHTML = '<div class="alert alert-info">Not enough historical data yet.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="grid-2">
+      <div>
+        <div style="font-weight:600;color:var(--green);margin-bottom:0.75rem;font-size:0.875rem">Rising</div>
+        ${rising.map(t => `
+          <div class="trend-item trend-up">
+            <span style="font-weight:500">${t.skill}</span>
+            <span class="trend-badge up">+${t.change}%</span>
+          </div>`).join('')}
+      </div>
+      <div>
+        <div style="font-weight:600;color:var(--red);margin-bottom:0.75rem;font-size:0.875rem">Falling</div>
+        ${falling.map(t => `
+          <div class="trend-item trend-down">
+            <span style="font-weight:500">${t.skill}</span>
+            <span class="trend-badge down">${t.change}%</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderResources(resources) {
+  const el = document.getElementById('resources-container');
+  if (!resources.length) {
+    el.innerHTML = '<div class="alert alert-info">No trend data yet — resources will appear after 2+ days of scrapes.</div>';
+    return;
+  }
+  el.innerHTML = resources.map(item => {
+    const resourceLinks = item.resources.map(res => {
+      const levelBadge = res.level
+        ? `<span style="background:#eff6ff;color:#3b82f6;border-radius:4px;padding:0.1rem 0.35rem;font-size:0.7rem;margin-left:0.25rem">${res.level}</span>`
+        : '';
+      return `<a href="${res.url}" target="_blank"
+          style="font-size:0.83rem;color:var(--accent);text-decoration:none;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.2rem">
+          <span style="color:var(--muted)">•</span>
+          <span style="text-decoration:underline">${res.title}</span>
+          <span style="color:var(--muted);font-size:0.75rem">${res.url}</span>
+          ${levelBadge}
+        </a>`;
+    }).join('');
+
+    return `<div style="margin-bottom:1.25rem;padding:1rem;border:1px solid var(--border);border-radius:10px;background:#fafbfc">
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem">
+        <span style="font-weight:600;font-size:0.95rem;color:var(--navy)">${item.skill}</span>
+        <span style="background:#f0fdf4;color:var(--green);border:1px solid #bbf7d0;padding:0.15rem 0.5rem;border-radius:100px;font-size:0.75rem;font-weight:600">▲ +${item.change}%</span>
+        <span style="color:var(--muted);font-size:0.78rem">${item.type}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0.3rem">
+        ${resourceLinks}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── JOBS ──────────────────────────────────────────────────────────────────────
+async function loadJobs() {
+  document.getElementById('jobs-content').style.display = 'none';
+
+  if (!loadedSeasons.has(currentSeason)) {
+    try {
+      await scrapeWithLog(
+        currentSeason,
+        'jobs-scrape-log', 'jobs-scrape-panel', 'jobs-scrape-title',
+        'jobs-progress-label', 'jobs-progress-pct', 'jobs-progress-fill'
+      );
+    } catch(e) { return; }
+  } else {
+    document.getElementById('jobs-scrape-panel').style.display = 'none';
+  }
+
+  showLoading('Loading jobs...');
+  try {
+    const data = await fetch(`${API}/api/jobs/${currentSeason}`).then(r => r.json());
+    allJobs    = data.jobs;
+    shownJobs  = 0;
+
+    document.getElementById('jobs-title').textContent = `${currentSeason} ${currentSeasonYear} — Jobs`;
+
+    const roles  = [...new Set(allJobs.map(j => j.role_category))].sort();
+    const filter = document.getElementById('job-role-filter');
+    filter.innerHTML = '<option value="">All Roles</option>';
+    roles.forEach(r => {
+      const o = document.createElement('option');
+      o.value = o.textContent = r;
+      filter.appendChild(o);
+    });
+
+    document.getElementById('jobs-scrape-panel').style.display = 'none';
+    document.getElementById('jobs-content').style.display      = 'block';
+    renderJobs();
+  } catch(e) {
+    document.getElementById('jobs-list').innerHTML =
+      '<div class="alert alert-error">Could not load jobs.</div>';
+  } finally {
+    hideLoading();
+  }
+}
+
+function filterJobs() { shownJobs = 0; renderJobs(); }
+
+function renderJobs() {
+  const q    = document.getElementById('job-search').value.toLowerCase();
+  const role = document.getElementById('job-role-filter').value;
+  const PAGE = 20;
+
+  const filtered = allJobs.filter(j =>
+    (!q    || j.title.toLowerCase().includes(q) || j.company.toLowerCase().includes(q)) &&
+    (!role || j.role_category === role)
+  );
+
+  const page = filtered.slice(0, shownJobs + PAGE);
+  shownJobs  = page.length;
+
+  document.getElementById('jobs-list').innerHTML = page.map(j => `
+    <div class="job-card">
+      <div>
+        <div class="job-title">${j.title}</div>
+        <div class="job-meta">
+          <span>${j.company}</span>
+          <span>${j.location_city || 'Unknown'}</span>
+          <span class="job-tag ${j.is_remote ? 'tag-remote':'tag-onsite'}">${j.is_remote ? 'Remote':'On-site'}</span>
+          <span style="background:#f8fafc;padding:0.2rem 0.5rem;border-radius:6px;font-size:0.75rem;color:var(--muted)">${j.role_category}</span>
+        </div>
+      </div>
+      <a href="${j.apply_link}" target="_blank">
+        <button class="btn btn-primary" style="padding:0.5rem 1rem;font-size:0.8rem">Apply</button>
+      </a>
+    </div>`).join('') || '<div class="alert alert-info">No jobs match your search.</div>';
+
+  document.getElementById('jobs-load-more').style.display =
+    filtered.length > shownJobs ? 'block' : 'none';
+}
+
+function showMoreJobs() { renderJobs(); }
+
+// ── REPORT — ensure data exists before showing form ───────────────────────────
+async function ensureDataForReport() {
+  document.getElementById('report-form-content').style.display = 'none';
+
+  if (!loadedSeasons.has(currentSeason)) {
+    try {
+      await scrapeWithLog(
+        currentSeason,
+        'report-scrape-log', 'report-scrape-panel', 'report-scrape-title',
+        'report-progress-label', 'report-progress-pct', 'report-progress-fill'
+      );
+    } catch(e) { return; }
+  } else {
+    document.getElementById('report-scrape-panel').style.display = 'none';
+  }
+
+  document.getElementById('report-form-content').style.display = 'block';
+}
+
+// ── RESUME ────────────────────────────────────────────────────────────────────
+function handleDragOver(e)  { e.preventDefault(); document.getElementById('upload-zone').classList.add('dragover'); }
+function handleDragLeave()  { document.getElementById('upload-zone').classList.remove('dragover'); }
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) setResumeFile(file);
+}
+function handleFileSelect(e) { const f = e.target.files[0]; if (f) setResumeFile(f); }
+function setResumeFile(file) {
+  document.getElementById('upload-filename').textContent = file.name;
+  document.getElementById('btn-parse').disabled = false;
+  document.getElementById('btn-parse')._file   = file;
+}
+
+async function parseResume() {
+  const file = document.getElementById('btn-parse')._file;
+  if (!file) return;
+  showLoading('Parsing resume...', 'Extracting skills');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch(`${API}/api/parse-resume`, {method:'POST', body:fd}).then(r=>r.json());
+    techSkills = [...res.technical_skills];
+    softSkills = [...res.soft_skills];
+    document.getElementById('resume-parsed-result').style.display = 'block';
+    document.getElementById('resume-alert').textContent =
+      `Found ${res.total_found} skills — ${res.technical_skills.length} technical, ${res.soft_skills.length} soft.` +
+      (res.detected_name ? ` Name detected: ${res.detected_name}` : '');
+    if (res.detected_name) document.getElementById('f-name').value = res.detected_name;
+    goToStep(2);
+  } catch(e) {
+    alert('Could not parse resume. Try manual entry.');
+  } finally { hideLoading(); }
+}
+
+function skipResume() { goToStep(2); }
+
+// ── STEP NAV ──────────────────────────────────────────────────────────────────
+function goToStep(n) {
+  [1,2,3,4].forEach(i => {
+    document.getElementById(`form-step-${i}`).style.display = i===n ? 'block':'none';
+    const s = document.getElementById(`step-${i}`);
+    s.className = 'progress-step' + (i===n?' active':i<n?' done':'');
+  });
+  if (n === 3) populateSkillChips();
+}
+
+function populateSkillChips() {
+  renderChips('tech-chips', techSkills, 'tech');
+  renderChips('soft-chips', softSkills, 'soft');
+}
+
+// ── CHIPS ─────────────────────────────────────────────────────────────────────
+function handleChipKey(e, type) {
+  if (e.key==='Enter'||e.key===',') {
+    e.preventDefault();
+    const val = e.target.value.trim().replace(/,$/,'');
+    if (val) addChip(type, val);
+    e.target.value='';
+  } else if (e.key==='Backspace'&&!e.target.value) {
+    if (type==='tech'&&techSkills.length) { techSkills.pop(); renderChips('tech-chips',techSkills,'tech'); }
+    if (type==='soft'&&softSkills.length) { softSkills.pop(); renderChips('soft-chips',softSkills,'soft'); }
+  }
+}
+function addChip(type, val) {
+  if (type==='tech'&&!techSkills.includes(val)) { techSkills.push(val); renderChips('tech-chips',techSkills,'tech'); }
+  if (type==='soft'&&!softSkills.includes(val)) { softSkills.push(val); renderChips('soft-chips',softSkills,'soft'); }
+}
+function removeChip(type,idx) {
+  if (type==='tech') { techSkills.splice(idx,1); renderChips('tech-chips',techSkills,'tech'); }
+  if (type==='soft') { softSkills.splice(idx,1); renderChips('soft-chips',softSkills,'soft'); }
+}
+function renderChips(containerId, skills, type) {
+  const c   = document.getElementById(containerId);
+  const inp = document.getElementById(`${type}-chip-input`);
+  c.innerHTML='';
+  skills.forEach((s,i) => {
+    const chip = document.createElement('span');
+    chip.className = `chip${type==='soft'?' soft-chip':''}`;
+    chip.innerHTML = `${s}<button class="chip-remove" onclick="removeChip('${type}',${i})">x</button>`;
+    c.appendChild(chip);
+  });
+  c.appendChild(inp);
+}
+function focusTechInput() { document.getElementById('tech-chip-input').focus(); }
+function focusSoftInput()  { document.getElementById('soft-chip-input').focus(); }
+
+// ── GENERATE REPORT ───────────────────────────────────────────────────────────
+async function generateReport() {
+  const name   = document.getElementById('f-name').value.trim();
+  const uni    = document.getElementById('f-university').value.trim();
+  const degree = document.getElementById('f-degree').value;
+  const year   = parseInt(document.getElementById('f-year').value);
+
+  if (!name||!uni||!degree) { alert('Fill in name, university, and degree.'); goToStep(2); return; }
+  if (!techSkills.length&&!softSkills.length) { alert('Add at least one skill.'); return; }
+
+  showLoading('Generating your report...', 'Scoring jobs and building PDF — takes about 30 seconds');
+
+  const payload = {
+    season: currentSeason, name, university: uni, degree,
+    year_of_study: year, technical_skills: techSkills, soft_skills: softSkills,
+  };
+
+  try {
+    const res = await fetch(`${API}/api/generate-report`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    }).then(r=>r.json());
+
+    if (!res.success) throw new Error(res.detail||'Failed');
+
+    document.getElementById('download-link').href = `${API}${res.download_url}`;
+    document.getElementById('report-summary-text').textContent =
+      `${res.total_matches} matches found. Best match: ${res.top_match?.title} at ${res.top_match?.company} (${res.top_match?.fit_score}% fit).`;
+
+    await loadMatchPreview(payload);
+    goToStep(4);
+  } catch(e) {
+    alert(`Error: ${e.message}`);
+  } finally { hideLoading(); }
+}
+
+async function loadMatchPreview(payload) {
+  try {
+    const res = await fetch(`${API}/api/match-jobs`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    }).then(r=>r.json());
+
+    const el = document.getElementById('match-results');
+    if (!res.matches.length) { el.innerHTML='<div class="alert alert-info">No matches found.</div>'; return; }
+
+    el.innerHTML = res.matches.slice(0,8).map(m => {
+      const c = m.fit_score>=70?'var(--green)':m.fit_score>=50?'var(--gold)':'var(--muted)';
+      return `
+      <div class="job-card">
+        <div>
+          <div class="job-title">${m.job_title}</div>
+          <div class="job-meta">
+            <span>${m.company}</span>
+            <span>${m.location}</span>
+            <span class="job-tag ${m.is_remote?'tag-remote':'tag-onsite'}">${m.is_remote?'Remote':'On-site'}</span>
+          </div>
+          ${m.skills_matched?.length?`<div style="margin-top:0.5rem;font-size:0.78rem;color:var(--green)">Matched: ${m.skills_matched.slice(0,5).join(', ')}${m.skills_matched.length>5?` +${m.skills_matched.length-5} more`:''}</div>`:''}
+          ${m.skills_missing?.length?`<div style="margin-top:0.2rem;font-size:0.78rem;color:var(--muted)">Missing: ${m.skills_missing.slice(0,3).join(', ')}${m.skills_missing.length>3?` +${m.skills_missing.length-3} more`:''}</div>`:''}
+        </div>
+        <div style="text-align:right">
+          <div class="fit-score" style="color:${c}">${m.fit_score}%</div>
+          <div class="fit-tier">${(m.tier||'').replace(/[^\w\s%]/g,'').trim()}</div>
+          <a href="${m.apply_link}" target="_blank" style="margin-top:0.5rem;display:block">
+            <button class="btn btn-primary" style="padding:0.4rem 0.875rem;font-size:0.78rem">Apply</button>
+          </a>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Store match scores so the Insights fit chart can use them
+    window._lastMatchScores = res.matches;
+  } catch(e) { console.error(e); }
+}
+
+function resetForm() {
+  techSkills=[]; softSkills=[];
+  document.getElementById('resume-input').value='';
+  document.getElementById('upload-filename').textContent='';
+  document.getElementById('resume-parsed-result').style.display='none';
+  document.getElementById('btn-parse').disabled=true;
+  goToStep(1);
+}
+
+// ── INSIGHTS ──────────────────────────────────────────────────────────────────
+let insightSkillsData = { technical: [], soft: [] };
+const INS_COLORS = ['#2563eb','#10b981','#f59e0b','#ef4444','#8b5cf6','#0ea5e9','#f97316','#14b8a6'];
+
+async function loadInsights(forceRefresh = false) {
+  document.getElementById('insights-content').style.display = 'none';
+
+  if (!loadedSeasons.has(currentSeason) || forceRefresh) {
+    try {
+      await scrapeWithLog(
+        currentSeason,
+        'insights-scrape-log', 'insights-scrape-panel', 'insights-scrape-title',
+        'insights-progress-label', 'insights-progress-pct', 'insights-progress-fill'
+      );
+    } catch(e) { return; }
+  } else {
+    document.getElementById('insights-scrape-panel').style.display = 'none';
+  }
+
+  showLoading('Building insights...');
+  try {
+    const [jobsRes, skillsRes] = await Promise.all([
+      fetch(`${API}/api/jobs/${currentSeason}`).then(r => r.json()),
+      fetch(`${API}/api/skills/${currentSeason}`).then(r => r.json()),
+    ]);
+    const jobs = jobsRes.jobs || [];
+    insightSkillsData = skillsRes;
+
+    document.getElementById('insights-title').textContent = `${currentSeason} ${currentSeasonYear} — Market Insights`;
+    document.getElementById('ins-jobs').textContent = jobs.length;
+    const remotePct = jobs.length
+      ? Math.round(jobs.filter(j => j.is_remote).length / jobs.length * 100)
+      : 0;
+    document.getElementById('ins-remote').textContent = remotePct + '%';
+    document.getElementById('ins-roles').textContent = new Set(jobs.map(j => j.role_category)).size;
+    document.getElementById('ins-companies').textContent = new Set(jobs.map(j => j.company)).size;
+
+    // Destroy old charts and replace canvases to avoid stale state
+    ['donutChart','remoteChart','companyChart','timeChart','fitChart'].forEach(id => {
+      const existing = Chart.getChart(id);
+      if (existing) existing.destroy();
+      const canvas = document.getElementById(id);
+      if (canvas) {
+        const parent = canvas.parentElement;
+        const newCanvas = document.createElement('canvas');
+        newCanvas.id = id;
+        newCanvas.setAttribute('role', canvas.getAttribute('role') || 'img');
+        newCanvas.setAttribute('aria-label', canvas.getAttribute('aria-label') || '');
+        parent.replaceChild(newCanvas, canvas);
+      }
+    });
+
+    renderInsightDonut(jobs);
+    renderInsightRemote(jobs);
+    renderInsightSkills();
+    renderInsightCompanies(jobs);
+    renderInsightTimeline(jobs);
+    renderInsightFit(jobs);
+
+    document.getElementById('insights-scrape-panel').style.display = 'none';
+    document.getElementById('insights-content').style.display = 'block';
+  } catch(e) {
+    console.error(e);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderInsightDonut(jobs) {
+  const counts = {};
+  jobs.forEach(j => { counts[j.role_category] = (counts[j.role_category] || 0) + 1; });
+  const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,8);
+  const labels = sorted.map(([k]) => k);
+  const data   = sorted.map(([,v]) => v);
+  const total  = data.reduce((a,b) => a+b, 0);
+
+  document.getElementById('donut-legend').innerHTML = labels.map((l,i) =>
+    `<span style="display:flex;align-items:center;gap:0.3rem">
+       <span style="width:10px;height:10px;border-radius:2px;background:${INS_COLORS[i%INS_COLORS.length]};display:inline-block"></span>
+       ${l} ${Math.round(data[i]/total*100)}%
+     </span>`).join('');
+
+  new Chart(document.getElementById('donutChart'), {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: INS_COLORS, borderWidth: 0 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '60%',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} jobs` } } }
+    }
+  });
+}
+
+function renderInsightRemote(jobs) {
+  const cats = [...new Set(jobs.map(j => j.role_category))].slice(0,6);
+  new Chart(document.getElementById('remoteChart'), {
+    type: 'bar',
+    data: {
+      labels: cats.map(c => c.length > 14 ? c.slice(0,13)+'…' : c),
+      datasets: [
+        { label: 'Remote', data: cats.map(c => jobs.filter(j => j.role_category===c && j.is_remote).length), backgroundColor: '#2563eb', borderRadius: 3 },
+        { label: 'On-site', data: cats.map(c => jobs.filter(j => j.role_category===c && !j.is_remote).length), backgroundColor: '#94a3b8', borderRadius: 3 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { stacked: true, ticks: { font: { size: 10 }, maxRotation: 30 }, grid: { display: false } },
+        y: { stacked: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+      }
+    }
+  });
+}
+
+function renderInsightSkills() {
+  const type  = document.getElementById('skill-type-filter').value;
+  const count = parseInt(document.getElementById('skill-count-filter').value);
+  let skills  = type === 'technical' ? insightSkillsData.technical
+              : type === 'soft'      ? insightSkillsData.soft
+              : [...insightSkillsData.technical, ...insightSkillsData.soft]
+                  .sort((a,b) => b.demand_pct - a.demand_pct);
+  skills = skills.slice(0, count);
+  const max   = skills[0]?.demand_pct || 1;
+  const softSet = new Set(insightSkillsData.soft.map(s => s.skill));
+
+  document.getElementById('insight-skill-bars').innerHTML = skills.map(s => `
+    <div style="margin-bottom:0.6rem">
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">
+        <span>${s.skill}</span><span>${s.demand_pct}%</span>
+      </div>
+      <div style="height:7px;background:var(--border);border-radius:100px;overflow:hidden">
+        <div style="height:100%;border-radius:100px;width:${Math.round(s.demand_pct/max*100)}%;
+             background:${softSet.has(s.skill) ? 'var(--green)' : 'var(--accent)'};transition:width .6s ease"></div>
+      </div>
+    </div>`).join('');
+}
+
+function renderInsightCompanies(jobs) {
+  const counts = {};
+  jobs.forEach(j => { counts[j.company] = (counts[j.company] || 0) + 1; });
+  const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,8);
+  document.getElementById('companyChart').parentElement.style.height = (sorted.length * 34 + 60) + 'px';
+  new Chart(document.getElementById('companyChart'), {
+    type: 'bar',
+    data: {
+      labels: sorted.map(([k]) => k),
+      datasets: [{ data: sorted.map(([,v]) => v), backgroundColor: '#2563eb', borderRadius: 3 }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } },
+        y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+function renderInsightTimeline(jobs) {
+  const counts = {};
+  jobs.forEach(j => { if (j.date_posted) { const d = j.date_posted.slice(0,10); counts[d] = (counts[d]||0)+1; } });
+  const sorted = Object.entries(counts).sort((a,b) => a[0].localeCompare(b[0]));
+  if (sorted.length < 2) {
+    document.getElementById('timeChart').parentElement.innerHTML =
+      '<p style="color:var(--muted);font-size:0.85rem;padding:3rem 0;text-align:center">Timeline appears after multiple scrape days</p>';
+    return;
+  }
+  new Chart(document.getElementById('timeChart'), {
+    type: 'line',
+    data: {
+      labels: sorted.map(([d]) => d.slice(5)),
+      datasets: [{ label: 'Jobs', data: sorted.map(([,v]) => v), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.07)', fill: true, tension: 0.35, pointRadius: 3 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 10 }, maxRotation: 30, autoSkip: true }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+      }
+    }
+  });
+}
+
+function renderInsightFit(jobs) {
+  const labels = ['< 30%','30–50%','50–70%','70–85%','85–100%'];
+  const colors = ['#94a3b8','#f59e0b','#2563eb','#10b981','#059669'];
+
+  // Use match scores from last report run if available; otherwise try jobs array
+  const scoredJobs = (window._lastMatchScores && window._lastMatchScores.length)
+    ? window._lastMatchScores
+    : (jobs || []).filter(j => j.fit_score != null);
+
+  let buckets = [0, 0, 0, 0, 0];
+  if (scoredJobs.length) {
+    scoredJobs.forEach(j => {
+      const s = j.fit_score;
+      if      (s < 30)  buckets[0]++;
+      else if (s < 50)  buckets[1]++;
+      else if (s < 70)  buckets[2]++;
+      else if (s < 85)  buckets[3]++;
+      else              buckets[4]++;
+    });
+  }
+
+  const hasData = buckets.some(v => v > 0);
+  if (!hasData) {
+    const canvas = document.getElementById('fitChart');
+    if (canvas) {
+      canvas.parentElement.innerHTML = `<p style="color:var(--muted);font-size:0.85rem;padding:3rem 0;text-align:center">
+        Fit score distribution will appear after you generate a report with your skills.</p>`;
+    }
+    return;
+  }
+
+  new Chart(document.getElementById('fitChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: buckets, backgroundColor: colors, borderRadius: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} jobs` } } },
+      scales: {
+        x: { ticks: { font: { size: 11 } }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(128,128,128,0.1)' } }
+      }
+    }
+  });
+}
+
+init();
+</script>
+</body>
+</html>
