@@ -259,15 +259,6 @@ def scrape_stream(season: str, year: int):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-from fastapi import UploadFile, File
-
-@app.post("/admin/upload-parquet/{filename}")
-async def upload_parquet(filename: str, file: UploadFile = File(...)):
-    path = os.path.join(DATA_DIR, filename)
-    with open(path, "wb") as f:
-        f.write(await file.read())
-    return {"status": "uploaded", "path": path}
-
 @app.get("/api/resources/{season}/{year}")
 def get_resources(season: str, year: int):
     season = season.capitalize()

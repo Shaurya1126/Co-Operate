@@ -2939,7 +2939,7 @@ def generate_pdf_report(student: dict, season: str,
         Paragraph(f"All {season} 2026 Co-op Postings Found",
                    page_title_style),
         Paragraph(
-            f"Complete list of {len(df)} job postings scraped for the "
+            f"Showing {min(len(df), 200)} of {len(df)} job postings scraped for the "
             f"{season} 2026 co-op term. Click any link to apply.",
             sub_style),
         HRFlowable(width="100%", thickness=2,
@@ -2950,7 +2950,7 @@ def generate_pdf_report(student: dict, season: str,
     all_jobs_data = [["#", "Job Title & Link", "Company",
                        "Location", "Remote"]]
 
-    for i, row in df.iterrows():
+    for i, row in df.head(200).iterrows():
         title_text = (str(row["title"])[:42] + "..."
                       if len(str(row["title"])) > 42
                       else str(row["title"]))
