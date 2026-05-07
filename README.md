@@ -9,7 +9,6 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![Pandas](https://img.shields.io/badge/Pandas-2.0+-150458?style=flat-square&logo=pandas&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deployed_on-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 </div>
 
@@ -449,10 +448,6 @@ Pull requests are welcome. For major changes, open an issue first to discuss wha
 5. Open a Pull Request
 
 ---
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
