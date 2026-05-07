@@ -1461,7 +1461,7 @@ import requests
 import time
 
 API_KEY   = os.getenv("RAPIDAPI_KEY")
-NUM_PAGES = 8     # ~80 jobs per run
+NUM_PAGES = 40  # ~80 jobs per run
 
 
 def build_search_query(season: str) -> str:
