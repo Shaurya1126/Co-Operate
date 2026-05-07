@@ -35,6 +35,7 @@ from fastapi.responses       import FileResponse, StreamingResponse
 from fastapi.staticfiles     import StaticFiles
 from pydantic                import BaseModel
 from dotenv import load_dotenv
+import pytz
 load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
@@ -225,7 +226,7 @@ def collect_streaming(season: str, year: int):
     if os.path.exists(parquet_path):
         try:
             existing = pd.read_parquet(parquet_path)
-            today    = datetime.now().date().isoformat()
+            today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
             if "scraped_date" in existing.columns:
                 existing = existing[existing["scraped_date"] != today]
             combined = pd.concat([existing, new_df], ignore_index=True)
