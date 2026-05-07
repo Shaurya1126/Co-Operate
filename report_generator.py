@@ -40,7 +40,7 @@ from reportlab.lib.enums      import TA_CENTER
 from reportlab.platypus import Image
 from dotenv import load_dotenv
 load_dotenv()
-
+DATA_DIR = os.getenv("DATA_DIR", ".")
 # ══════════════════════════════════════════════════════════════════════════════
 #  CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1641,7 +1641,7 @@ def collect_and_save(season: str) -> str:
     Scrapes only once per day per season.
     Uses a .lock file to guarantee no repeat fetching.
     """
-    parquet_path = f"jobs_{season.lower()}.parquet"
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
 
     # ── Gate — exit immediately if already done today ──────────────────────
     if not should_refresh(parquet_path):
@@ -2039,8 +2039,8 @@ def build_skill_freq(df: pd.DataFrame) -> pd.DataFrame:
     return skill_df
 
 
-def build_skill_trends(season: str, window_days: int = 30) -> pd.DataFrame:
-    parquet_path = f"jobs_{season.lower()}.parquet"
+def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd.DataFrame:
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
 
     if not os.path.exists(parquet_path):
         return pd.DataFrame()
@@ -3063,7 +3063,7 @@ def main():
 
     # 4. Skill frequency table
     skill_df = build_skill_freq(df)
-    trend_df  = build_skill_trends(season)
+    trend_df  = build_skill_trends(season, 2026)
     # Save trend chart
     if not trend_df.empty:
         save_trend_chart(trend_df, season)  

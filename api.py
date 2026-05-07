@@ -354,7 +354,7 @@ def get_processed_jobs(season: str, year: int = None) -> dict:
         df = clean_dataframe(df)
         df, tfidf, tfidf_matrix = build_features(df)
         skill_df = build_skill_freq(df)
-        trend_df = build_skill_trends(season)
+        trend_df = build_skill_trends(season, year or 2026)
 
         save_skill_charts(skill_df, season)
         if not trend_df.empty:
