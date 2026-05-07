@@ -22,5 +22,5 @@ def daily_scrape():
             print(f"Scrape failed for {season} {year}: {e}")
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(daily_scrape, 'cron', hour=6, minute=0)  # runs at 6am UTC daily
+scheduler.add_job(daily_scrape, 'cron', hour=5, minute=1, timezone='America/New_York')
 scheduler.start()
