@@ -77,7 +77,6 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
 _scrape_lock = threading.Lock()
-_job_cache: dict = {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
