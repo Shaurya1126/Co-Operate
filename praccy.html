@@ -1420,6 +1420,7 @@ function selectSeason(season, year, el) {
 
   currentSeason     = season;
   currentSeasonYear = year;
+  currentDate = null;
   document.querySelectorAll('.season-pill').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
 

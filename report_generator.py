@@ -12,6 +12,7 @@ Usage:
 
 import os
 import sys
+import pytz
 import re
 import numpy as np
 import pandas as pd
@@ -1542,7 +1543,7 @@ def build_dataframe(jobs: list[dict], season: str) -> pd.DataFrame:
             "posted_at":       job.get("job_posted_at_datetime_utc"),
             "highlights":      str(job.get("job_highlights", {})),
             "season":          season,
-            "scraped_date":    datetime.now().date().isoformat(),
+            "scraped_date": datetime.now(pytz.timezone("America/New_York")).date().isoformat(),
         })
 
     df = pd.DataFrame(records)
@@ -1566,7 +1567,7 @@ def should_refresh(parquet_path: str) -> bool:
     """Check if we already scraped today for this season."""
     if not os.path.exists(parquet_path):
         return True
-    today     = datetime.now().date().isoformat()
+    today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
     lock_file = parquet_path.replace(".parquet", ".lock")
 
     # Check lock file first — simplest and most reliable
@@ -1597,7 +1598,7 @@ def should_refresh(parquet_path: str) -> bool:
 
 def write_lock(parquet_path: str):
     """Write today's date to a lock file after successful scrape."""
-    today     = datetime.now().date().isoformat()
+    today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
     lock_file = parquet_path.replace(".parquet", ".lock")
     with open(lock_file, "w") as f:
         f.write(today)
@@ -1669,12 +1670,12 @@ def collect_and_save(season: str) -> str:
     if os.path.exists(parquet_path):
         try:
             existing = pd.read_parquet(parquet_path)
-            today    = datetime.now().date().isoformat()
+            today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
             if "scraped_date" in existing.columns:
                 existing = existing[existing["scraped_date"] != today]
             combined = pd.concat([existing, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
-                subset=["title", "company"], keep="last"
+            subset=["title", "company", "scraped_date"], keep="last"
             ).reset_index(drop=True)
             print(f"  📊 Historical: {len(existing)} | "
                   f"Today: {len(new_df)} | "
@@ -1855,7 +1856,7 @@ def get_student_profile() -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_data(season: str) -> pd.DataFrame:
-    path = f"jobs_{season.lower()}.parquet"
+    path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
     if not os.path.exists(path):
         print(f"\n❌ File not found: '{path}'")
         print(f"   Run  python collect_jobs.py  first and choose '{season}'.")
@@ -2047,6 +2048,10 @@ def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd
 
     try:
         df_all = pd.read_parquet(parquet_path)
+        if "skills_found" in df_all.columns:
+            df_all["skills_found"] = df_all["skills_found"].apply(
+                lambda x: list(x) if isinstance(x, (set, list)) else []
+            )
     except Exception as e:
         print(f"  Could not load historical data: {e}")
         return pd.DataFrame()
@@ -2063,7 +2068,7 @@ def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd
         return pd.DataFrame()
 
     # Only look at last N days
-    today  = datetime.now().date()
+    today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
     cutoff = (today - pd.Timedelta(days=window_days)).isoformat()
     df_all = df_all[df_all["scraped_date"] >= cutoff]
 
@@ -3071,14 +3076,6 @@ def main():
     print(skill_df.head(10)[["skill", "demand_pct"]].to_string(index=False))
 
     # ── Section 4b: Job Match Chart ───────────────────────────────────────────
-    job_chart_path = f"job_matches_{season.lower()}.png"
-    if os.path.exists(job_chart_path):
-        story += [
-            Paragraph("<b>Fit Score Breakdown</b>", body_style),
-            Spacer(1, 6),
-            Image(job_chart_path, width=6.5 * inch, height=3.5 * inch),
-            Spacer(1, 10),
-        ]
 
     # 5. Train Random Forest
     train_random_forest(tfidf_matrix, df)

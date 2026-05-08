@@ -388,7 +388,7 @@ def health():
 @app.get("/api/debug/{season}")
 def debug_season(season: str):
     season = season.capitalize()
-    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}.parquet")
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
     df = pd.read_parquet(parquet_path)
     return {
         "file": parquet_path,
