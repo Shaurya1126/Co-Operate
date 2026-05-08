@@ -2068,7 +2068,7 @@ def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd
         return pd.DataFrame()
 
     # Only look at last N days
-    today = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
+    today = datetime.now(pytz.timezone("America/New_York")).date()
     cutoff = (today - pd.Timedelta(days=window_days)).isoformat()
     df_all = df_all[df_all["scraped_date"] >= cutoff]
 
