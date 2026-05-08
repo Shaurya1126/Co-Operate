@@ -1620,8 +1620,7 @@ def trim_old_data(parquet_path: str, keep_days: int = 90):
         if "scraped_date" not in df.columns:
             return
 
-        cutoff   = (datetime.now().date()
-                    - pd.Timedelta(days=keep_days)).isoformat()
+        cutoff = (datetime.now(pytz.timezone("America/New_York")).date() - pd.Timedelta(days=keep_days)).isoformat()
         df       = df[df["scraped_date"] >= cutoff]
         after    = len(df)
         removed  = before - after

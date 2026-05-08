@@ -86,8 +86,9 @@ _job_cache: dict = {}
 
 def get_upcoming_seasons() -> list[dict]:
     """Returns the next 3 upcoming seasons with their correct years."""
-    month = datetime.now().month
-    year  = datetime.now().year
+    now   = datetime.now(pytz.timezone("America/New_York"))
+    month = now.month
+    year  = now.year
 
     # Define season start months
     season_order = [
@@ -231,7 +232,7 @@ def collect_streaming(season: str, year: int):
                 existing = existing[existing["scraped_date"] != today]
             combined = pd.concat([existing, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
-                subset=["title", "company"], keep="last"
+            subset=["title", "company", "scraped_date"], keep="last"
             ).reset_index(drop=True)
             new_df = combined
         except Exception:
@@ -317,18 +318,27 @@ def get_jobs_by_date(season: str, year: int, date: str):
 # ══════════════════════════════════════════════════════════════════════════════
 #  CACHE HELPER
 # ══════════════════════════════════════════════════════════════════════════════
+_job_cache: dict = {}
+_job_cache_times: dict = {}  # tracks when each key was cached
 
 def get_processed_jobs(season: str, year: int = None) -> dict:
-    """
-    Load + process jobs for a season+year, cached in memory.
-    Raises 404 if no parquet exists -- caller must scrape first.
-    """
     cache_key    = f"{season}_{year}" if year else season
     parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet") if year else os.path.join(DATA_DIR, f"jobs_{season.lower()}.parquet")
 
     print(f"DEBUG get_processed_jobs called with season='{season}' year='{year}' path='{parquet_path}'")
+
+    # Invalidate cache if parquet was modified after we last cached it
     if cache_key in _job_cache:
-        return _job_cache[cache_key]
+        try:
+            parquet_mtime = os.path.getmtime(parquet_path)
+            cache_time = _job_cache_times.get(cache_key, 0)
+            if parquet_mtime <= cache_time:
+                return _job_cache[cache_key]  # still fresh
+            else:
+                print(f"  🔄 Parquet updated since last cache — reloading {cache_key}")
+                del _job_cache[cache_key]
+        except Exception:
+            pass
 
     with _scrape_lock:
         if cache_key in _job_cache:
@@ -358,6 +368,7 @@ def get_processed_jobs(season: str, year: int = None) -> dict:
             "tfidf":        tfidf,
             "tfidf_matrix": tfidf_matrix,
         }
+        _job_cache_times[cache_key] = os.path.getmtime(parquet_path)
         return _job_cache[cache_key]
 
 
