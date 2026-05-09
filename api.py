@@ -239,6 +239,12 @@ def collect_streaming(season: str, year: int):
     yield f"data: {json.dumps({'type':'building','msg':f'Building dataset from {len(all_jobs)} results...'})}\n\n"
 
     new_df = build_dataframe(all_jobs, season)
+    new_df = clean_dataframe(new_df)
+    new_df, _, _ = build_features(new_df)
+    if "skills_found" in new_df.columns:
+        new_df["skills_found"] = new_df["skills_found"].apply(
+            lambda x: list(x) if isinstance(x, (set, list)) else []
+        )
 
     if os.path.exists(parquet_path):
         try:

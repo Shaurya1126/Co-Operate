@@ -1665,6 +1665,12 @@ def collect_and_save(season: str, year: int = 2026) -> str:
 
     print(f"\n📦 Building dataframe from {len(jobs)} raw results...")
     new_df = build_dataframe(jobs, season)
+    new_df = clean_dataframe(new_df)
+    new_df, _, _ = build_features(new_df)
+    if "skills_found" in new_df.columns:
+        new_df["skills_found"] = new_df["skills_found"].apply(
+            lambda x: list(x) if isinstance(x, (set, list)) else []
+        )
 
     # Merge with historical data from previous days
     if os.path.exists(parquet_path):
@@ -1990,8 +1996,17 @@ def classify_role(title: str) -> str:
 def build_features(df: pd.DataFrame):
     """Run full NLP + TF-IDF pipeline. Returns enriched df + tfidf artifacts."""
     print("\n🔤 Extracting skills from job descriptions...")
-    df["full_text"]        = df["full_text"].apply(normalize_text)
-    df["skills_found"]     = df["full_text"].apply(extract_skills)
+    df["full_text"] = df["full_text"].apply(normalize_text)
+
+    # Only extract skills for rows that don't already have them
+    if "skills_found" not in df.columns:
+        df["skills_found"] = df["full_text"].apply(extract_skills)
+    else:
+        mask = df["skills_found"].apply(
+            lambda x: not isinstance(x, list) or len(x) == 0
+        )
+        df.loc[mask, "skills_found"] = df.loc[mask, "full_text"].apply(extract_skills)
+
     df["skill_count"]      = df["skills_found"].apply(len)
     df["clean_text"]       = df["full_text"].apply(clean_text_for_tfidf)
     df["experience_level"] = df["full_text"].apply(extract_experience_level)
@@ -2079,11 +2094,14 @@ def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd
               f"(need 2+ days, have {len(dates)})")
         return pd.DataFrame()
 
-    # Extract skills on the fly if not already present
-    if "skills_found" not in df_all.columns:
+    needs_extraction = (
+    "skills_found" not in df_all.columns or
+    df_all["skills_found"].apply(lambda x: len(x) == 0).all()
+    )
+    if needs_extraction:
         print(f"  Extracting skills from {season} historical data...")
         df_all["full_text"]    = (df_all["description"].fillna("") + " "
-                                   + df_all["highlights"].fillna(""))
+                                + df_all["highlights"].fillna(""))
         df_all["full_text"]    = df_all["full_text"].apply(normalize_text)
         df_all["skills_found"] = df_all["full_text"].apply(extract_skills)
 
