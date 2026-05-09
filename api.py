@@ -39,6 +39,23 @@ import pytz
 load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    # Startup
+    print("🚀 API starting up...")
+    from scheduler import scheduler as job_scheduler
+    if not job_scheduler.running:
+        job_scheduler.start()
+    jobs = job_scheduler.get_jobs()
+    for job in jobs:
+        print(f"  📅 Scheduled job: {job.name} — next run: {job.next_run_time}")
+    yield
+    # Shutdown
+    job_scheduler.shutdown()
+    print("🛑 Scheduler shut down.")
+
 sys.path.insert(0, os.path.dirname(__file__))
 from report_generator import (
     SKILLS, SOFT_SKILLS, DEGREE_ROLE_MAP, DEGREE_BASELINE_SKILLS,
@@ -57,7 +74,7 @@ from report_generator import (
 #  APP SETUP
 # ══════════════════════════════════════════════════════════════════════════════
 
-app = FastAPI(title="Co-op Readiness API", version="1.0.0")
+app = FastAPI(title="Co-op Readiness API", version="1.0.0", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="."), name="static")
 
@@ -231,11 +248,11 @@ def collect_streaming(season: str, year: int):
                 existing = existing[existing["scraped_date"] != today]
             combined = pd.concat([existing, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
-            subset=["title", "company", "scraped_date"], keep="last"
+            subset=["title", "company", "scraped_date", "apply_link"], keep="last"
             ).reset_index(drop=True)
             new_df = combined
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  ⚠️  Could not merge historical data: {e}")
 
     new_df.to_parquet(parquet_path, index=False)
     write_lock(parquet_path)
@@ -594,7 +611,3 @@ def download_report(filename: str):
         raise HTTPException(404, "Report not found.")
     return FileResponse(str(path), media_type="application/pdf",
                         filename=filename)
-
-from scheduler import scheduler as job_scheduler
-import atexit
-atexit.register(lambda: job_scheduler.shutdown())

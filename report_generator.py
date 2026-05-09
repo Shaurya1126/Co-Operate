@@ -1466,13 +1466,14 @@ NUM_PAGES = 20
 
 
 def build_search_query(season: str) -> str:
-    year = datetime.now().year
+    now = datetime.now(pytz.timezone("America/New_York"))
+    year = now.year
     if season == "Summer":
-        query_year = year if datetime.now().month <= 8 else year + 1
+        query_year = year if now.month <= 8 else year + 1
     elif season == "Fall":
-        query_year = year if datetime.now().month <= 12 else year + 1
+        query_year = year if now.month <= 12 else year + 1
     else:
-        query_year = year + 1 if datetime.now().month >= 9 else year
+        query_year = year + 1 if now.month >= 9 else year
     query = f"{season} Co-op OR Intern Canada {query_year}"
     print(f"🔍 Search query: \"{query}\"")
     return query
@@ -1555,11 +1556,11 @@ def build_dataframe(jobs: list[dict], season: str) -> pd.DataFrame:
         lambda x: "Remote" if x else "In person"
     )
     before = len(df)
-    df = df.drop_duplicates(subset=["title", "company"],
-                             keep="first").reset_index(drop=True)
+    df = df.drop_duplicates(subset=["title", "company", "apply_link"],
+                            keep="first").reset_index(drop=True)
     removed = before - len(df)
     if removed:
-        print(f"  🧹 Removed {removed} duplicate postings")
+        print(f"  🧹 Removed {removed} exact duplicate postings within today's batch")
     return df
 
 
@@ -1636,12 +1637,12 @@ def trim_old_data(parquet_path: str, keep_days: int = 90):
         print(f"  ⚠️  Could not trim data: {e}")
 
 
-def collect_and_save(season: str) -> str:
+def collect_and_save(season: str, year: int = 2026) -> str:
     """
     Scrapes only once per day per season.
     Uses a .lock file to guarantee no repeat fetching.
     """
-    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
+    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
 
     # ── Gate — exit immediately if already done today ──────────────────────
     if not should_refresh(parquet_path):
@@ -1674,7 +1675,7 @@ def collect_and_save(season: str) -> str:
                 existing = existing[existing["scraped_date"] != today]
             combined = pd.concat([existing, new_df], ignore_index=True)
             combined = combined.drop_duplicates(
-            subset=["title", "company", "scraped_date"], keep="last"
+            subset=["title", "company", "scraped_date", "apply_link"], keep="last"
             ).reset_index(drop=True)
             print(f"  📊 Historical: {len(existing)} | "
                   f"Today: {len(new_df)} | "
