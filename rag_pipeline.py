@@ -193,32 +193,35 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
         return inputs
 
     def _generate(inputs: dict) -> str:
-        # 1. Build the true content structure for Gemini SDK
+        # 1. Map existing LangChain history into native Gemini SDK structure
         contents = []
-        
-        # Map LangChain history to Gemini SDK structure safely
         for msg in inputs.get("chat_history", []):
+            # Check class name string to avoid brittle type importing
             role = "user" if msg.__class__.__name__ == "HumanMessage" else "model"
-            contents.append(_genai_types.Content(
-                role=role,
-                parts=[_genai_types.Part.from_text(text=msg.content)]
-            ))
+            contents.append(
+                _genai_types.Content(
+                    role=role,
+                    parts=[_genai_types.Part.from_text(text=msg.content)]
+                )
+            )
             
-        # Append the final query injected with the retrieved context
+        # 2. Inject context and final question as the last user message
         final_query = f"Retrieved job context:\n{inputs['context']}\n\nUser Question: {inputs['question']}"
-        contents.append(_genai_types.Content(
-            role="user",
-            parts=[_genai_types.Part.from_text(text=final_query)]
-        ))
+        contents.append(
+            _genai_types.Content(
+                role="user",
+                parts=[_genai_types.Part.from_text(text=final_query)]
+            )
+        )
 
-        # 2. Set the system instruction in the config where it belongs
+        # 3. Supply system prompt via GenerateContentConfig where it belongs
         cfg = _genai_types.GenerateContentConfig(
             system_instruction=system_text,
             temperature=0.3,
             max_output_tokens=800
         )
         
-        # 3. Execute call cleanly without stringified templates or model-prefixtraps
+        # 4. Invoke clean, explicit call (no fallback strings or prefixes required)
         response = client.models.generate_content(
             model=GEMINI_MODEL, 
             contents=contents, 
