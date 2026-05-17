@@ -10,7 +10,7 @@
 
   gtag('config', 'G-T7SBJ8J28S');
 </script>
-<link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230d1b2a'/><circle cx='16' cy='16' r='7' fill='none' stroke='%232e7d9e' stroke-width='2.5'/><circle cx='16' cy='16' r='2.5' fill='%232e7d9e'/></svg>">
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Co-operator — Co-op Readiness Platform</title>
@@ -691,33 +691,34 @@ input:focus, select:focus {
   position: fixed;
   bottom: 2rem;
   right: 2rem;
-  width: 58px;
-  height: 58px;
-  background: linear-gradient(135deg, var(--teal), var(--accent2));
-  border-radius: 50%;
-  border: none;
+  width: 52px;
+  height: 52px;
+  background: var(--navy);
+  border-radius: 14px;
+  border: 1px solid rgba(46,125,158,0.35);
   cursor: pointer;
-  box-shadow: 0 4px 20px rgba(46,125,158,0.45);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.22), 0 1px 4px rgba(0,0,0,0.12);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 900;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
 }
-.chat-fab:hover { transform: scale(1.08); box-shadow: 0 6px 28px rgba(46,125,158,0.6); }
-.chat-fab svg  { width: 26px; height: 26px; stroke: white; }
+.chat-fab:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(0,0,0,0.28); border-color: rgba(46,125,158,0.6); }
+.chat-fab svg  { width: 22px; height: 22px; stroke: #f0ece4; }
 .chat-fab .chat-badge {
   position: absolute;
-  top: -3px; right: -3px;
-  background: var(--red);
+  top: -5px; right: -5px;
+  background: var(--teal);
   color: white;
   border-radius: 50%;
   width: 18px; height: 18px;
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   display: none;
   align-items: center;
   justify-content: center;
+  border: 2px solid white;
 }
 
 .chat-window {
@@ -738,74 +739,99 @@ input:focus, select:focus {
 .chat-window.open { display: flex; }
 
 .chat-header {
-  background: linear-gradient(135deg, #08111c 0%, #0d1b2a 100%);
-  padding: 0.95rem 1.1rem;
+  background: #0d1b2a;
+  padding: 1rem 1.1rem;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  border-bottom: 1px solid rgba(46,125,158,0.2);
-}
-.chat-header-dot {
-  width: 9px; height: 9px;
-  background: var(--teal);
-  border-radius: 50%;
-  box-shadow: 0 0 6px rgba(46,125,158,0.8);
+  gap: 0.875rem;
+  border-bottom: 1px solid rgba(46,125,158,0.18);
   flex-shrink: 0;
+}
+.chat-header-icon {
+  width: 34px;
+  height: 34px;
+  background: rgba(46,125,158,0.15);
+  border: 1px solid rgba(46,125,158,0.3);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.chat-header-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke: var(--teal);
+}
+.chat-header-text {
+  flex: 1;
+  min-width: 0;
 }
 .chat-header-title {
   font-family: 'Google Sans', sans-serif;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   font-weight: 700;
   color: #f7f4ef;
-  flex: 1;
+  letter-spacing: 0.01em;
 }
 .chat-header-sub {
-  font-size: 0.7rem;
-  color: rgba(247,244,239,0.4);
+  font-size: 0.68rem;
+  color: rgba(247,244,239,0.38);
   letter-spacing: 0.04em;
+  margin-top: 0.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .chat-close {
-  background: none;
-  border: none;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
   color: rgba(247,244,239,0.5);
   cursor: pointer;
-  font-size: 1.2rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 1rem;
   line-height: 1;
-  padding: 0.1rem 0.3rem;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
-.chat-close:hover { color: #f7f4ef; background: rgba(255,255,255,0.1); }
+.chat-close:hover { color: #f7f4ef; background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 1.1rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  background: #fafaf9;
+  gap: 0.6rem;
+  background: #f7f6f4;
 }
 .chat-msg {
-  max-width: 90%;
-  padding: 0.65rem 0.875rem;
+  max-width: 88%;
+  padding: 0.6rem 0.875rem;
   border-radius: 12px;
-  font-size: 0.84rem;
-  line-height: 1.55;
+  font-size: 0.835rem;
+  line-height: 1.58;
   word-break: break-word;
 }
 .chat-msg.user {
-  background: var(--accent);
-  color: #f7f4ef;
+  background: var(--navy);
+  color: #f0ece4;
   align-self: flex-end;
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 3px;
+  box-shadow: 0 1px 4px rgba(13,27,42,0.15);
 }
 .chat-msg.bot {
   background: white;
   color: var(--text);
   border: 1px solid var(--border);
   align-self: flex-start;
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: 3px;
+  box-shadow: 0 1px 3px rgba(13,27,42,0.05);
 }
 .chat-msg.bot ul, .chat-msg.bot ol { padding-left: 1.2rem; margin: 0.35rem 0; }
 .chat-msg.bot li { margin-bottom: 0.2rem; }
@@ -818,8 +844,8 @@ input:focus, select:focus {
   padding: 0.5rem 0.75rem;
 }
 .chat-typing span {
-  width: 7px; height: 7px;
-  background: var(--muted);
+  width: 6px; height: 6px;
+  background: #b0b8c1;
   border-radius: 50%;
   animation: typingBounce 1.2s infinite;
 }
@@ -831,65 +857,69 @@ input:focus, select:focus {
 }
 
 .chat-footer {
-  padding: 0.75rem;
+  padding: 0.7rem 0.875rem;
   border-top: 1px solid var(--border);
   display: flex;
   gap: 0.5rem;
   background: white;
+  align-items: flex-end;
 }
 .chat-input {
   flex: 1;
-  padding: 0.6rem 0.875rem;
+  padding: 0.6rem 0.8rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-family: 'DM Sans', sans-serif;
   font-size: 0.84rem;
   outline: none;
   resize: none;
-  line-height: 1.4;
+  line-height: 1.45;
   max-height: 100px;
-  transition: border-color 0.18s, box-shadow 0.18s;
+  background: #fafaf9;
+  color: var(--text);
+  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
 }
 .chat-input:focus {
   border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(46,125,158,0.1);
+  background: white;
+  box-shadow: 0 0 0 3px rgba(46,125,158,0.08);
 }
 .chat-send {
-  background: var(--teal);
+  background: var(--navy);
   border: none;
   border-radius: 8px;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  align-self: flex-end;
   transition: background 0.18s, transform 0.15s;
 }
-.chat-send:hover { background: var(--accent2); transform: scale(1.05); }
-.chat-send svg { width: 16px; height: 16px; stroke: white; }
-.chat-send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.chat-send:hover { background: var(--accent2); transform: scale(1.04); }
+.chat-send svg { width: 15px; height: 15px; stroke: white; }
+.chat-send:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 
 .chat-suggestions {
-  padding: 0.4rem 1rem 0.6rem;
+  padding: 0.55rem 0.875rem 0.6rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  background: #fafaf9;
+  gap: 0.3rem;
+  background: white;
   border-bottom: 1px solid var(--border);
 }
 .chat-suggestion-chip {
-  padding: 0.22rem 0.65rem;
-  border: 1px solid var(--border2);
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
   border-radius: 100px;
-  font-size: 0.72rem;
+  font-size: 0.71rem;
   color: var(--muted);
   cursor: pointer;
   transition: all 0.15s;
-  background: white;
+  background: #fafaf9;
   font-family: 'DM Sans', sans-serif;
+  letter-spacing: 0.01em;
 }
 .chat-suggestion-chip:hover {
   background: var(--teal);
@@ -1608,14 +1638,7 @@ async function init() {
     seasons.forEach((s, i) => {
       const pill = document.createElement('div');
       pill.className = `season-pill${i === 0 ? ' active' : ''}`;
-      // Show a dot indicator if this season has scraped data
-      const dot = s.has_data
-        ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-left:5px;vertical-align:middle"></span>`
-        : '';
-      const dateHint = s.has_data && s.date_count >= 2
-        ? `<span style="font-size:0.65rem;opacity:0.7;margin-left:3px">(${s.date_count}d)</span>`
-        : '';
-      pill.innerHTML = s.label + dot + dateHint;
+      pill.innerHTML = s.label;
       pill.onclick = () => selectSeason(s.season, s.year, pill);
       pillContainer.appendChild(pill);
     });
@@ -2793,8 +2816,12 @@ setTimeout(() => {
 
 <div class="chat-window" id="chat-window">
   <div class="chat-header">
-    <div class="chat-header-dot"></div>
-    <div>
+    <div class="chat-header-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <div class="chat-header-text">
       <div class="chat-header-title">Co-operator AI</div>
       <div class="chat-header-sub" id="chat-status-label">Ask anything about co-op jobs</div>
     </div>
