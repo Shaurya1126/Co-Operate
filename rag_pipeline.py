@@ -35,7 +35,7 @@ from pydantic          import BaseModel
 load_dotenv()
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 _vector_stores: dict = {}

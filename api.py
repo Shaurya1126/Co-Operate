@@ -40,7 +40,7 @@ load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
 from contextlib import asynccontextmanager
-
+_RAG_AVAILABLE = False
 @asynccontextmanager
 async def lifespan(app):
     # Startup
