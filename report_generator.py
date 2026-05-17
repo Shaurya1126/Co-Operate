@@ -1861,8 +1861,8 @@ def get_student_profile() -> dict:
 #  DATA LOADING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_data(season: str) -> pd.DataFrame:
-    path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
+def load_data(season: str, year: int = 2026) -> pd.DataFrame:
+    path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
     if not os.path.exists(path):
         print(f"\n❌ File not found: '{path}'")
         print(f"   Run  python collect_jobs.py  first and choose '{season}'.")
@@ -2090,18 +2090,26 @@ def build_skill_trends(season: str, year: int=2026, window_days: int = 30) -> pd
     dates = sorted(df_all["scraped_date"].unique())
 
     if len(dates) < 2:
-        print(f"  Not enough historical data for {season} trends "
-              f"(need 2+ days, have {len(dates)})")
-        return pd.DataFrame()
+        print(f"  Not enough data for {season} trends — need 2+ scrape days, have {len(dates)}.")
+        return pd.DataFrame()   # UI will show "need more data" message
 
-    needs_extraction = (
-    "skills_found" not in df_all.columns or
-    df_all["skills_found"].apply(lambda x: len(x) == 0).all()
+    # Re-extract skills if the column is missing OR if >20% of rows are empty
+    # (.all() was too lenient — a single non-empty row blocked re-extraction)
+    skills_missing = "skills_found" not in df_all.columns
+    skills_mostly_empty = (
+        not skills_missing and
+        df_all["skills_found"].apply(lambda x: len(x) == 0).mean() > 0.2
     )
-    if needs_extraction:
-        print(f"  Extracting skills from {season} historical data...")
-        df_all["full_text"]    = (df_all["description"].fillna("") + " "
-                                + df_all["highlights"].fillna(""))
+    if skills_missing or skills_mostly_empty:
+        empty_pct = 100 if skills_missing else round(
+            df_all["skills_found"].apply(lambda x: len(x) == 0).mean() * 100
+        )
+        print(f"  Re-extracting skills for {season} trends ({empty_pct}% rows empty)...")
+        if "full_text" not in df_all.columns:
+            df_all["full_text"] = (
+                df_all["description"].fillna("") + " " +
+                df_all["highlights"].fillna("")
+            )
         df_all["full_text"]    = df_all["full_text"].apply(normalize_text)
         df_all["skills_found"] = df_all["full_text"].apply(extract_skills)
 
@@ -2190,7 +2198,7 @@ def save_trend_chart(trend_df: pd.DataFrame, season: str) -> str:
                  combined["change"].max() + 8)
     plt.tight_layout()
 
-    path = f"skill_trends_{season.lower()}.png"
+    path = os.path.join(DATA_DIR, f"skill_trends_{season.lower()}.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"📈 Trend chart saved → {path}")
@@ -2427,7 +2435,7 @@ def save_skill_charts(skill_df: pd.DataFrame, season: str):
                   fontweight="bold")
     plt.tight_layout()
 
-    chart_path = f"skill_demand_{season.lower()}.png"
+    chart_path = os.path.join(DATA_DIR, f"skill_demand_{season.lower()}.png")
     plt.savefig(chart_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"📈 Chart saved → {chart_path}")
@@ -2622,7 +2630,7 @@ def generate_pdf_report(student: dict, season: str,
     ]
 
     # Embed skill demand chart if it exists
-    chart_path = f"skill_demand_{season.lower()}.png"
+    chart_path = os.path.join(DATA_DIR, f"skill_demand_{season.lower()}.png")
     if os.path.exists(chart_path):
         story += [
             Paragraph("<b>Skill Demand Visualized</b>", body_style),
@@ -2710,7 +2718,7 @@ def generate_pdf_report(student: dict, season: str,
         story += [trend_table, Spacer(1, 8)]
 
         # Embed trend chart if it exists
-        trend_chart = f"skill_trends_{season.lower()}.png"
+        trend_chart = os.path.join(DATA_DIR, f"skill_trends_{season.lower()}.png")
         if os.path.exists(trend_chart):
             story += [
                 Spacer(1, 4),
@@ -2895,7 +2903,7 @@ def generate_pdf_report(student: dict, season: str,
     story += [jt, Spacer(1, 10)]
 
     # Embed job match chart if it exists
-    job_chart_path = f"job_matches_{season.lower()}.png"
+    job_chart_path = os.path.join(DATA_DIR, f"job_matches_{season.lower()}.png")
     if os.path.exists(job_chart_path):
         story += [
             Paragraph("<b>Fit Score Breakdown</b>", body_style),
@@ -3058,7 +3066,7 @@ def save_job_match_chart(ranked_jobs: pd.DataFrame,
     ax.legend()
     plt.tight_layout()
 
-    path = f"job_matches_{season.lower()}.png"
+    path = os.path.join(DATA_DIR, f"job_matches_{season.lower()}.png")
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"📈 Job match chart saved → {path}")

@@ -51,6 +51,25 @@ async def lifespan(app):
     jobs = job_scheduler.get_jobs()
     for job in jobs:
         print(f"  📅 Scheduled job: {job.name} — next run: {job.next_run_time}")
+
+    # Auto-init RAG for any parquet files already on disk
+    # Runs in background threads so startup is not blocked
+    if _RAG_AVAILABLE:
+        import threading as _threading
+        import glob as _glob
+        pattern = os.path.join(DATA_DIR, "jobs_*_*.parquet")
+        for _pq in sorted(_glob.glob(pattern)):
+            # Extract season and year from filename e.g. jobs_summer_2026.parquet
+            _fname = os.path.basename(_pq).replace(".parquet", "")  # jobs_summer_2026
+            _parts = _fname.split("_")  # ["jobs", "summer", "2026"]
+            if len(_parts) == 3 and _parts[2].isdigit():
+                _s = _parts[1].capitalize()
+                _y = int(_parts[2])
+                print(f"  🔍 Found existing parquet for {_s} {_y} — auto-initing RAG ...")
+                _threading.Thread(
+                    target=_rag_init, args=(_s, _y), daemon=True
+                ).start()
+
     yield
     # Shutdown
     job_scheduler.shutdown()
@@ -70,6 +89,14 @@ from report_generator import (
     build_dataframe, should_refresh, write_lock, trim_old_data, build_rising_resources
 )
 
+# ── RAG pipeline (Gemini-powered chatbot) ────────────────────────────────────
+try:
+    from rag_pipeline import chat_router, init_rag as _rag_init
+    _RAG_AVAILABLE = True
+except Exception as _rag_err:
+    print(f"  ⚠️  RAG pipeline unavailable: {_rag_err}")
+    _RAG_AVAILABLE = False
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  APP SETUP
 # ══════════════════════════════════════════════════════════════════════════════
@@ -77,6 +104,11 @@ from report_generator import (
 app = FastAPI(title="Co-op Readiness API", version="1.0.0", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="."), name="static")
+
+# Register RAG chat router if available
+if _RAG_AVAILABLE:
+    app.include_router(chat_router)
+    print("  🤖 RAG chatbot router registered at /api/chat")
 
 @app.get("/")
 def serve_frontend():
@@ -158,7 +190,20 @@ def build_search_query(season: str, year: int) -> str:
 
 @app.get("/api/seasons")
 def get_seasons():
-    return {"seasons": get_upcoming_seasons()}
+    seasons = get_upcoming_seasons()
+    # Annotate each season with whether it has scraped data
+    for s in seasons:
+        path = os.path.join(DATA_DIR, f"jobs_{s['season'].lower()}_{s['year']}.parquet")
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+            dates = df["scraped_date"].nunique() if "scraped_date" in df.columns else 0
+            s["has_data"] = True
+            s["date_count"] = int(dates)
+        else:
+            s["has_data"] = False
+            s["date_count"] = 0
+    # Keep chronological order for display — frontend picks the best default separately
+    return {"seasons": seasons}
 
 def fetch_jobs_streaming(query: str):
     """
@@ -268,6 +313,16 @@ def collect_streaming(season: str, year: int):
     _job_cache.pop(f"{season}_{year}", None)
     _job_cache.pop(season, None)  # also clear legacy key
 
+    # Auto-init RAG chain with fresh data (background thread, non-blocking)
+    if _RAG_AVAILABLE:
+        try:
+            import threading as _threading
+            _threading.Thread(
+                target=_rag_init, args=(season, year), daemon=True
+            ).start()
+        except Exception as _e:
+            print(f"  ⚠️  RAG auto-init failed: {_e}")
+
     yield f"data: {json.dumps({'type':'done','total':len(new_df),'msg':f'Done. Saved {len(new_df)} jobs.'})}\n\n"
 
 
@@ -285,10 +340,30 @@ def scrape_stream(season: str, year: int):
 @app.get("/api/resources/{season}/{year}")
 def get_resources(season: str, year: int):
     season = season.capitalize()
-    cache = get_processed_jobs(season, year)
+    cache    = get_processed_jobs(season, year)
     trend_df = cache["trend_df"]
-    rising = build_rising_resources(trend_df)
-    return {"season": season, "available": len(rising) > 0, "resources": rising}
+    skill_df = cache["skill_df"]
+
+    if not trend_df.empty:
+        # Trends available: show resources for rising skills
+        rising = build_rising_resources(trend_df)
+    else:
+        # No multi-day trend yet: show resources for top skills by demand
+        from report_generator import get_resources_for_skill, SOFT_SKILLS
+        rising = []
+        for _, row in skill_df.head(15).iterrows():
+            resources = get_resources_for_skill(row["skill"])
+            if resources:
+                rising.append({
+                    "skill":     row["skill"],
+                    "change":    row["demand_pct"],   # demand % used as proxy
+                    "type":      row["type"],
+                    "resources": resources,
+                    "is_snapshot": True,              # flag so UI can label it differently
+                })
+
+    return {"season": season, "available": len(rising) > 0,
+            "resources": rising, "has_trends": not trend_df.empty}
 
 @app.get("/api/available-dates/{season}/{year}")
 def get_available_dates(season: str, year: int):
@@ -390,7 +465,11 @@ def get_processed_jobs(season: str, year: int = None) -> dict:
             "tfidf":        tfidf,
             "tfidf_matrix": tfidf_matrix,
         }
+        # Record exact mtime so any future parquet change triggers a reload
         _job_cache_times[cache_key] = os.path.getmtime(parquet_path)
+        print(f"  📦 Cache built for {cache_key} — "
+              f"trends: {len(trend_df)} skills, "
+              f"top skill: {skill_df.iloc[0]['skill'] if not skill_df.empty else 'n/a'}")
         return _job_cache[cache_key]
 
 
@@ -419,15 +498,40 @@ def health():
     return {"status": "ok", "time": datetime.now().isoformat()}
 
 @app.get("/api/debug/{season}")
-def debug_season(season: str):
-    season = season.capitalize()
-    parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_2026.parquet")
-    df = pd.read_parquet(parquet_path)
-    return {
-        "file": parquet_path,
-        "season_values": df["season"].unique().tolist() if "season" in df.columns else "NO SEASON COLUMN",
-        "row_count": len(df)
-    }
+@app.get("/api/debug/{season}/{year}")
+def debug_season(season: str, year: int = 2026):
+    try:
+        season = season.capitalize()
+        parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
+        if not os.path.exists(parquet_path):
+            return {"error": f"File not found: {parquet_path}", "DATA_DIR": DATA_DIR}
+        df = pd.read_parquet(parquet_path)
+        dates = sorted([str(d) for d in df["scraped_date"].dropna().unique()]) \
+            if "scraped_date" in df.columns else []
+        if "skills_found" in df.columns:
+            # Normalize to list first — parquet may store sets/frozensets
+            def _skill_len(x):
+                try: return len(list(x)) if x is not None else 0
+                except: return 0
+            empty_pct = round(df["skills_found"].apply(lambda x: _skill_len(x)==0).mean()*100)
+            sample_skills = list(df["skills_found"].dropna().iloc[0]) if len(df) else []
+        else:
+            empty_pct = "no skills_found column"
+            sample_skills = []
+        return {
+            "file":             parquet_path,
+            "row_count":        len(df),
+            "columns":          list(df.columns),
+            "unique_dates":     dates,
+            "date_count":       len(dates),
+            "trend_eligible":   len(dates) >= 2,
+            "skills_empty_pct": empty_pct,
+            "sample_skills_row0": sample_skills,
+            "season_values":    df["season"].unique().tolist() if "season" in df.columns else "n/a",
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 @app.get("/api/meta")
 def get_meta():
