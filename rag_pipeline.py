@@ -1,7 +1,7 @@
 """
 rag_pipeline.py
 ───────────────
-LangChain v0.3 RAG pipeline (Optimized Hybrid Engine for Free Tier Limits)
+LangChain v0.3 RAG pipeline (LCEL-based, no deprecated chains/memory imports)
 powered by Gemini gemini-2.5-flash-lite.
 
 Exposes a FastAPI router that plugs into api.py:
@@ -35,7 +35,7 @@ print(f"DEBUG GOOGLE_API_KEY = '{os.getenv('GOOGLE_API_KEY')}'")
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
 
-# ── Safe In-memory Document and Context Engine ───────────────────────────────
+# ── Safe In-memory Stores (Protects against Free Tier Token Exhaustion) ──
 _raw_documents: dict = {}   # key -> list of Documents
 _rag_chains:    dict = {}   # key -> executable LCEL chain
 _histories:     dict = {}   # key → deque of LangChain message objects
@@ -72,7 +72,7 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
         print(f"  ✅ Re-extracted skills: {n_with_skills}/{len(df)} jobs now have skills")
 
     docs = []
-    # Cap matching jobs to prevent ballooning your prompt context sizing
+    # Cap parsed rows to prevent ballooning context sizes on the free tier
     sample_df = df.head(100)
 
     for _, row in sample_df.iterrows():
@@ -121,7 +121,7 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SYSTEM SYSTEM TEMPLATE SETUP
+#  SYSTEM TEMPLATE SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _SYSTEM = (
@@ -149,7 +149,7 @@ _SYSTEM = (
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HIGH-SPEED SEARCH & IN-MEMORY CONTEXT FILTER (Quota Shield)
+#  HIGH-SPEED QUOTA-SAFE CONTEXT MATCHER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_chain(season: str, year: int, api_key: str):
@@ -178,7 +178,7 @@ def _build_chain(season: str, year: int, api_key: str):
         q_lower = inputs["question"].lower()
         matched_chunks = []
         
-        # Substring parsing filter
+        # Superfast keyword text scan matching
         for d in job_docs:
             if d.metadata.get("title") in q_lower or d.metadata.get("company") in q_lower or any(word in d.page_content.lower() for word in q_lower.split() if len(word) > 4):
                 matched_chunks.append(d)
@@ -217,10 +217,11 @@ def init_rag(season: str, year: int) -> bool:
         return False
 
     try:
-        print(f"  🤖 RAG: Initializing safe hybrid index for {key}...")
+        print(f"  🤖 RAG: Initializing hybrid query index for {key}...")
         if key not in _raw_documents:
             _raw_documents[key] = _load_parquet_docs(parquet_path, season, year)
         
+        # FIXED: Positional arguments now perfectly match the _build_chain signature!
         _rag_chains[key] = _build_chain(season, year, GOOGLE_API_KEY)
         _histories[key] = deque(maxlen=10)   
         _init_errors.pop(key, None)             
@@ -251,7 +252,7 @@ def ask(question: str, season: str, year: int) -> str:
         return answer
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            return "⚠️ The chatbot has reached Google's Free Tier daily limit (20 requests/day). Please try again tomorrow or add valid plan details!"
+            return "⚠️ The chatbot has reached Google's Free Tier daily limit (20 requests/day). Please try again tomorrow or add a billing method!"
         return f"Error generating response: {e}"
 
 # ── FastAPI Router Mapping ───────────────────────────────────────────────────
