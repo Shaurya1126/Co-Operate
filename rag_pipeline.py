@@ -33,7 +33,7 @@ from pydantic          import BaseModel
 
 print(f"DEBUG GOOGLE_API_KEY = '{os.getenv('GOOGLE_API_KEY')}'")
 DATA_DIR       = os.getenv("DATA_DIR", ".")
-GEMINI_MODEL   = "gemini-2.5-flash-lite"
+GEMINI_MODEL   = "gemini-1.5-flash"
 
 # ── Safe In-memory Stores (Protects against Free Tier Token Exhaustion) ──
 _raw_documents: dict = {}   # key -> list of Documents

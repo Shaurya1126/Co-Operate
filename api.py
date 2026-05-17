@@ -42,7 +42,7 @@ chat_router = None
 
 try:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from rag_pipeline import chat_router
+    from rag_pipeline import chat_router, init_rag as _rag_init
     _RAG_AVAILABLE = True
     print("  ✅ RAG Pipeline safely loaded.")
 except Exception as _rag_err:
@@ -58,8 +58,21 @@ async def lifespan(app):
     if not job_scheduler.running:
         job_scheduler.start()
     
-    # LAZY LOADING ACTIVE: Background thread loops are deactivated 
-    # to maintain strict compliance with Free Tier quota systems.
+    # Auto-init RAG for any parquet files already on disk
+    if _RAG_AVAILABLE:
+        import threading as _threading
+        import glob as _glob
+        pattern = os.path.join(DATA_DIR, "jobs_*_*.parquet")
+        for _pq in sorted(_glob.glob(pattern)):
+            _fname = os.path.basename(_pq).replace(".parquet", "")
+            _parts = _fname.split("_")  # ["jobs", "summer", "2026"]
+            if len(_parts) == 3 and _parts[2].isdigit():
+                _s = _parts[1].capitalize()
+                _y = int(_parts[2])
+                print(f"  🔍 Found existing parquet for {_s} {_y} — auto-initing RAG ...")
+                _threading.Thread(
+                    target=_rag_init, args=(_s, _y), daemon=True
+                ).start()
     yield
     
     # Shutdown
