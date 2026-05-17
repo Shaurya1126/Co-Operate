@@ -11,9 +11,10 @@ Exposes a FastAPI router that plugs into api.py:
 
 import os
 import json
+import time
 import asyncio
 from collections import Counter, deque
-import time
+
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -128,54 +129,58 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 #  VECTOR STORE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import time  # Ensure time is imported at the top of your file if it isn't already
-
 def _build_vector_store(docs: list, api_key: str = None) -> FAISS:
-    # Fallback to env variable if api_key parameter isn't provided directly
     if not api_key:
         api_key = os.getenv("GOOGLE_API_KEY")
     
     if not api_key:
-        raise ValueError("RAG Vector Store initialization failed: 'GOOGLE_API_KEY' is missing or not set in environment.")
+        raise ValueError("RAG Vector Store initialization failed: 'GOOGLE_API_KEY' is missing or not set.")
 
-    # Separate summary docs (keep whole) from job docs (can split if huge)
     summary_docs = [d for d in docs if d.metadata.get('type') == 'summary']
     job_docs = [d for d in docs if d.metadata.get('type') != 'summary']
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     final_docs = summary_docs + splitter.split_documents(job_docs)
 
-    print(f"  ⚡ Found {len(final_docs)} total chunks. Initializing rate-limited FAISS build...")
+    total_chunks = len(final_docs)
+    print(f"  ⚡ Found {total_chunks} chunks. Executing strict sequential pacing loop...")
     
     embeddings = GoogleGenerativeAIEmbeddings(
         model="gemini-embedding-001", 
         google_api_key=api_key
     )
 
-    # ── RATE LIMIT BYPASS: Batching Document Ingestion ──
-    # The free tier allows 100 embedding requests/min. We'll use small batches.
-    BATCH_SIZE = 25 
-    DELAY_SECONDS = 15  # Pause between batches to guarantee we stay under the 100/min limit
+    # Instantiate vector store with just the first chunk
+    db = FAISS.from_documents([final_docs[0]], embeddings)
 
-    # Initialize the FAISS vector store with the first batch
-    first_batch = final_docs[:BATCH_SIZE]
-    print(f"  📦 Processing batch 1/{((len(final_docs) - 1) // BATCH_SIZE) + 1} ({len(first_batch)} chunks)...")
-    db = FAISS.from_documents(first_batch, embeddings)
+    # Force a slight, uniform delay between every single call or mini-sub-group to safely bypass the 100 requests/min ceiling.
+    # To optimize initialization speed, we can push in blocks of 5 docs, resting between loops.
+    SUB_BATCH_SIZE = 5
+    DELAY_SECONDS = 4.0
 
-    # Progressively add subsequent batches with a strict cooldown delay
-    for i in range(BATCH_SIZE, len(final_docs), BATCH_SIZE):
-        batch = final_docs[i : i + BATCH_SIZE]
-        batch_num = (i // BATCH_SIZE) + 1
-        total_batches = ((len(final_docs) - 1) // BATCH_SIZE) + 1
+    for idx in range(1, total_chunks, SUB_BATCH_SIZE):
+        sub_batch = final_docs[idx : idx + SUB_BATCH_SIZE]
         
-        print(f"  ⏳ Sleeping for {DELAY_SECONDS}s to protect API rate limit limits...")
-        time.sleep(DELAY_SECONDS)
-        
-        print(f"  📦 Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
-        db.add_documents(batch)
+        # Implement adaptive backoff retry logic if Google hits a temporary spike
+        for attempt in range(3):
+            try:
+                db.add_documents(sub_batch)
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    cooldown = 30 * (attempt + 1)
+                    print(f"  ⚠️ Rate limit hit during loop. Backing off for {cooldown}s...")
+                    time.sleep(cooldown)
+                else:
+                    raise e
+                    
+        if idx + SUB_BATCH_SIZE < total_chunks:
+            print(f"  ⏳ Ingested {min(idx + SUB_BATCH_SIZE - 1, total_chunks)}/{total_chunks} chunks. Pacing backend data feed...")
+            time.sleep(DELAY_SECONDS)
 
     print("  ✅ Vector store successfully built without exhausting quota limits!")
     return db
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  RAG MAIN PIPELINE CREATOR
@@ -208,13 +213,11 @@ def init_rag(season: str, year: int) -> bool:
             temperature=0.3
         )
 
-        # Build LCEL context chain
         def format_docs(documents):
             return "\n\n---\n\n".join(d.page_content for d in documents)
 
         context_chain = RunnableLambda(retriever) | RunnableLambda(format_docs)
 
-        # Context-aware Prompt Setup
         prompt = ChatPromptTemplate.from_messages([
             ("system", (
                 "You are the Co-op Analytics Chatbot Assistant, an expert data concierge.\n"
@@ -230,7 +233,6 @@ def init_rag(season: str, year: int) -> bool:
             ("human", "{question}")
         ])
 
-        # Core chain using LangChain Expression Language (LCEL)
         rag_chain = (
             {
                 "context": context_chain,
@@ -280,7 +282,6 @@ async def chat_endpoint(req: ChatRequest):
     season = req.season.capitalize()
     key = f"{season}_{req.year}"
 
-    # Auto-initialize on demand if not ready
     if key not in _rag_chains:
         success = await asyncio.get_event_loop().run_in_executor(None, init_rag, season, req.year)
         if not success:
@@ -290,7 +291,6 @@ async def chat_endpoint(req: ChatRequest):
                 season=season, year=req.year, ready=False
             )
 
-    # Manage rolling in-memory history (last 10 interactions)
     hist_key = f"{req.session_id}_{key}"
     if hist_key not in _histories:
         _histories[hist_key] = deque(maxlen=10)
@@ -306,7 +306,6 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         answer = f"⚠️ An error occurred while executing the chain: {str(e)}"
 
-    # Record context sequence history
     history.append(HumanMessage(content=req.message))
     history.append(AIMessage(content=answer))
 
@@ -322,7 +321,7 @@ async def chat_status(season: str, year: int):
         "season": season,
         "year": year,
         "ready": key in _rag_chains,
-        "error": _init_errors.get(key),   # None when healthy
+        "error": _init_errors.get(key),
     }
 
 
@@ -331,7 +330,7 @@ async def chat_init(season: str, year: int):
     season = season.capitalize()
     loop = asyncio.get_event_loop()
     ok = await loop.run_in_executor(None, init_rag, season, year)
-    return {{"season": season, "year": year, "initialized": ok}}
+    return {"season": season, "year": year, "initialized": ok}
 
 
 if __name__ == "__main__":

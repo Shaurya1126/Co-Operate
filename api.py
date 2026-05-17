@@ -90,11 +90,21 @@ from report_generator import (
 )
 
 # ── RAG pipeline (Gemini-powered chatbot) ────────────────────────────────────
+_RAG_AVAILABLE = False
+
 try:
+    # Safely inject the directory path to system context if needed
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    # Import the router components safely
     from rag_pipeline import chat_router, init_rag as _rag_init
     _RAG_AVAILABLE = True
+    print("  ✅ RAG Pipeline modules successfully imported!")
 except Exception as _rag_err:
-    print(f"  ⚠️  RAG pipeline unavailable: {_rag_err}")
+    print(f"  ⚠️  RAG pipeline unavailable due to import error: {_rag_err}")
+    import traceback
+    traceback.print_exc()
     _RAG_AVAILABLE = False
 
 # ══════════════════════════════════════════════════════════════════════════════
