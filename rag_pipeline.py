@@ -32,11 +32,9 @@ from fastapi           import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic          import BaseModel
 
-load_dotenv(override=False)
 print(f"DEBUG GOOGLE_API_KEY = '{os.getenv('GOOGLE_API_KEY')}'")
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
-GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 _vector_stores: dict = {}
@@ -129,7 +127,7 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 #  VECTOR STORE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_vector_store(docs: list) -> FAISS:
+def _build_vector_store(docs: list, api_key: str) -> FAISS:
     # Separate summary docs (keep whole) from job docs (can split if huge)
     summary_docs = [d for d in docs if d.metadata.get('type') == 'summary']
     job_docs     = [d for d in docs if d.metadata.get('type') != 'summary']
@@ -145,7 +143,7 @@ def _build_vector_store(docs: list) -> FAISS:
     print(f"  🔢 {len(all_chunks)} chunks ({len(summary_docs)} summary + {len(job_chunks)} job) → embedding locally...")
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/text-embedding-004",
-        google_api_key=GOOGLE_API_KEY,
+        google_api_key=api_key,
     )
     vs = FAISS.from_documents(all_chunks, embeddings)
     print("  ✅ Vector store ready")
@@ -181,10 +179,10 @@ _SYSTEM = (
 )
 
 
-def _build_chain(vs: FAISS, season: str, year: int):
+def _build_chain(vs: FAISS, season: str, year: int, api_key: str):
     llm = ChatGoogleGenerativeAI(
         model=GEMINI_MODEL,
-        google_api_key=GOOGLE_API_KEY,
+        google_api_key=api_key,
         temperature=0.3,
         max_output_tokens=1024,
     )
@@ -228,7 +226,10 @@ _init_errors: dict = {}   # key → human-readable failure reason
 
 
 def init_rag(season: str, year: int) -> bool:
-    key          = f"{season}_{year}"
+    load_dotenv(override=False)
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
+    key = f"{season}_{year}"
     parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
 
     if not os.path.exists(parquet_path):
@@ -261,6 +262,7 @@ def init_rag(season: str, year: int) -> bool:
         print(f"  ❌ {msg}\n{traceback.format_exc()}")
         _init_errors[key] = msg
         return False
+    
 
 
 def ask(question: str, season: str, year: int) -> str:
