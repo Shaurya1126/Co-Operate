@@ -1,10 +1,9 @@
 """
 rag_pipeline.py
 ───────────────
-Production-grade, highly resilient RAG pipeline powered by Gemini 2.5 Flash-Lite.
-Implements multi-tenant session tracking, strict thread-safe atomic locks, 
-regex cache key normalization, an outbound API concurrency semaphore, and 
-an exponential backoff retry loop to handle 429 quota limits gracefully.
+Production-hardened, token-optimized RAG pipeline powered by Gemini 2.5 Flash-Lite.
+Provides highly structured, non-truncated job listings while actively managing
+upstream context windows and maximizing input/output token efficiency.
 """
 
 import os
@@ -46,16 +45,15 @@ _embed_model = None
 _embedding_dim = 384  
 
 # ── THREADING & CONCURRENCY CONTROL STRUCTURES ────────────────────────────────
-_model_init_lock = threading.Lock()   # Safeguards lazy model initialization
-_throttle_lock   = threading.Lock()   # Guarantees atomic lookups for active chats
-_gemini_semaphore = threading.Semaphore(2)  # Strict bottleneck: max 2 active LLM execution workers
+_model_init_lock = threading.Lock()   
+_throttle_lock   = threading.Lock()   
+_gemini_semaphore = threading.Semaphore(2)  # Limits parallel queries to Gemini
 
 def get_embedding_model():
-    """Thread-safe lazy-initializer for the local SentenceTransformer weights."""
+    """Thread-safe lazy-initializer for local SentenceTransformer weights."""
     global _embed_model
     if _embed_model is None:
         with _model_init_lock:
-            # Double-checked locking pattern
             if _embed_model is None:
                 print("  [RAG Engine] Lazy Loading Local Embedding Model (all-MiniLM-L6-v2)...")
                 _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -63,10 +61,10 @@ def get_embedding_model():
 
 
 # ── PERFORMANCE & MULTI-TENANT ISOLATED STORAGE ───────────────────────────────
-_vector_indexes: dict = {}  # In-memory FAISS indices
-_doc_lookups:    dict = {}  # Document fragments mapped by key
-_summaries:      dict = {}  # Macro statistics summaries
-_rag_chains:     dict = {}  # Executable LangChain flow graphs
+_vector_indexes: dict = {}  
+_doc_lookups:    dict = {}  
+_summaries:      dict = {}  
+_rag_chains:     dict = {}  
 _init_errors:    dict = {}  
 
 # Session Storage Architecture: { key: { session_id: deque(history) } }
@@ -74,7 +72,7 @@ _session_histories: dict = {}
 
 # Global String Caches
 _response_cache: dict = {}  
-_active_chats:   dict = {}  # Tracking timestamps to block duplicate double-clicks
+_active_chats:   dict = {}  
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -111,8 +109,11 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
     docs = []
     for _, row in df.head(300).iterrows():
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
-        desc_raw = str(row.get("description", ""))[:300].replace("\n", " ")
-        desc_snippet = desc_raw[:120] + "..." if len(desc_raw) > 120 else desc_raw
+        desc_raw = str(row.get("description", "")).replace("\n", " ").strip()
+        
+        # TOKEN OPTIMIZATION: Bumped from 120 to 400 characters. 
+        # Delivers rich operational context without flooding the prompt layout.
+        desc_snippet = desc_raw[:400] + "..." if len(desc_raw) > 400 else desc_raw
         
         text = (
             f"Job: {row.get('title', 'Unknown')} @ {row.get('company', 'Unknown')}\n"
@@ -159,11 +160,15 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
 #  SEARCH AND INFERENCE CHAINS WITH EXPONENTIAL BACKOFF RETRIES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# TOKEN OPTIMIZATION: System instructions strictly command formatting structural bounds.
 _SYSTEM = (
     "You are Co-operator AI, an assistant for Canadian co-op job analytics.\n"
     "Context rules:\n"
-    "- Give short, direct answers with crisp formatting.\n"
-    "- For individual jobs, strictly cite company & title.\n"
+    "- Give short, direct answers with clean formatting.\n"
+    "- If listing specific jobs, use a complete bullet list matching this format exactly:\n"
+    "  * [Job Title] at [Company Name] - [Location Summary]\n"
+    "- CRITICAL FORMATTING RULE: Always complete bullet points fully. Never end a sentence mid-line or stop output mid-word.\n"
+    "- TOKEN CONTROL: Rather than returning a partial or truncated bullet item, reduce the total number of jobs you list to fit neatly within your token allowance.\n"
     "- If query needs macro statistics or generic metrics, rely entirely on the STATS SUMMARY section.\n"
     "Data:\n{context}"
 )
@@ -181,8 +186,13 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
 
         matched_chunks = []
         if index is not None and all_docs:
-            words = [w for w in q_lower.split() if len(w) > 3]
-            company_filters = [d for d in all_docs if any(w in d.metadata["company"] for w in words)]
+            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "me", "my", "do", "go", "no", "so", "or", "as", "if"}
+            words = [w for w in q_lower.split() if len(w) >= 2 and w not in ignore_words]
+            
+            company_filters = [
+                d for d in all_docs 
+                if any(re.search(rf'\b{re.escape(w)}\b', d.metadata["company"]) for w in words)
+            ]
             
             embed_engine = get_embedding_model()
             if company_filters:
@@ -193,13 +203,16 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
                 faiss.normalize_L2(q_emb)
                 
                 scores = np.dot(sub_embs, q_emb.T).flatten()
-                for idx in np.argsort(-scores)[:3]:
-                    if scores[idx] >= 0.20:
+                # TOKEN OPTIMIZATION: Evaluates k=6 candidates. Generates structural completeness
+                # without blowing out the input token billing thresholds.
+                for idx in np.argsort(-scores)[:6]:
+                    if scores[idx] >= 0.15:
                         matched_chunks.append(company_filters[idx].page_content)
             else:
                 q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
-                scores, indices = index.search(q_emb, k=3)
+                # TOKEN OPTIMIZATION: Uniform k=6 parameter bound
+                scores, indices = index.search(q_emb, k=6)
                 for sim_score, idx in zip(scores[0], indices[0]):
                     if idx != -1 and sim_score >= 0.20:
                         matched_chunks.append(all_docs[idx].page_content)
@@ -217,15 +230,17 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
             contents.append(_genai_types.Content(role=role, parts=[_genai_types.Part.from_text(text=msg.content)]))
 
         contents.append(_genai_types.Content(role="user", parts=[_genai_types.Part.from_text(text=f"Context:\n{inputs['context']}\n\nQ: {inputs['question']}")]))
-        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.15, max_output_tokens=250)
         
-        # Concurrency Protection: Bottlenecks pipeline queries hitting upstream API servers
+        # TOKEN OPTIMIZATION: Bumped output headroom constraint to 450.
+        # Safely satisfies full text lines without allowing wasteful chat loops.
+        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.15, max_output_tokens=450)
+        
         with _gemini_semaphore:
             models_to_try = [GEMINI_MODEL, GEMINI_MODEL_FALLBACK]
             
             for model_target in models_to_try:
                 max_retries = 3
-                backoff_delay = 1.0  # Initial delay step in seconds
+                backoff_delay = 1.0  
                 
                 for attempt in range(max_retries):
                     try:
@@ -238,17 +253,16 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
                     except Exception as e:
                         err_msg = str(e).lower()
                         
-                        # Catch Quota, 429 Rate Limits, or Resource Exhaustion triggers explicitly
                         if "429" in err_msg or "exhausted" in err_msg or "rate_limit" in err_msg:
                             if attempt == max_retries - 1:
                                 print(f"  🚨 [Quota Exhausted] Failed after {max_retries} bounds on model {model_target}.")
-                                break  # Break loop step to exit and drop into fallback model chain
+                                break  
                             
                             print(f"  ⚠️ [429 Rate Limit] Hit on retry phase {attempt + 1}. Backing off for {backoff_delay}s...")
                             time.sleep(backoff_delay)
-                            backoff_delay *= 2.0  # Exponential shift cascade: 1s -> 2s -> 4s
+                            backoff_delay *= 2.0  
                         else:
-                            raise e  # Fail instantly if it is an invalid API key, context syntax, or structural crash
+                            raise e  
                             
         raise HTTPException(
             status_code=429, 
@@ -289,7 +303,6 @@ def init_rag(season: str, year: int) -> bool:
 def ask(question: str, season: str, year: int, session_id: str = "default_user") -> str:
     key = f"{season}_{year}"
     
-    # Normalized Cache Indexing: Scrub all symbols and minimize multi-whitespace groups
     normalized_q = re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', '', question.strip().lower()))
     cache_key = f"{key}_{session_id}_{normalized_q}"
     
@@ -315,6 +328,11 @@ def ask(question: str, season: str, year: int, session_id: str = "default_user")
         print(f"  🤖 [LLM Invoke] Processing query for session '{session_id}' via {GEMINI_MODEL}")
         answer = _rag_chains[key].invoke({"question": question, "chat_history": list(history_window)})
         
+        # Post-processing structural validation guard
+        if answer.strip().endswith("/") or answer.strip().endswith("-"):
+            print("  ⚠️ [Post-Processing Guard] Incomplete text boundary detected. Cleaning line tails...")
+            answer = answer.strip().rstrip("/-").strip() + "..."
+            
         history_window.append(HumanMessage(content=question))
         history_window.append(AIMessage(content=answer))
         
@@ -335,7 +353,7 @@ class ChatRequest(BaseModel):
     question:   str
     season:     str = "Summer"
     year:       int = 2026
-    session_id: str = "default_user"  # Frontend tracking token/hash to ensure sandboxed histories
+    session_id: str = "default_user"  
 
 class ChatResponse(BaseModel):
     answer: str
@@ -353,11 +371,10 @@ async def chat_endpoint(req: ChatRequest):
     normalized_q = re.sub(r'\s+', ' ', req.question.strip().lower())
     throttle_key = f"{season}_{req.year}_{req.session_id}_{normalized_q}"
     
-    # Thread-Safe Atomic Lock Evaluation Block
     with _throttle_lock:
         if throttle_key in _active_chats:
             last_time = _active_chats[throttle_key]
-            if now - last_time < 2.0:  # Strict 2-second temporal click window boundary
+            if now - last_time < 2.0:  
                 print("  🛑 [Throttled Lock] Concurrent duplicate query caught and dropped on backend!")
                 raise HTTPException(status_code=429, detail="Duplicate client operation dropped.")
         _active_chats[throttle_key] = now
