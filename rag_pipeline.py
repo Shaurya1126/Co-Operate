@@ -17,29 +17,32 @@ from collections import Counter, deque
 import pandas as pd
 from dotenv import load_dotenv
 
+# Load env variables early
+load_dotenv()
+
 # ── LangChain v0.3 imports (all from *-core / *-community / *-google-genai) ──
-from langchain_text_splitters          import RecursiveCharacterTextSplitter
-from langchain_core.documents          import Document
-from langchain_core.prompts            import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages           import HumanMessage, AIMessage
-from langchain_core.output_parsers     import StrOutputParser
-from langchain_core.runnables          import RunnableLambda
-from langchain_community.vectorstores  import FAISS
-from langchain_google_genai            import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
-from fastapi           import APIRouter
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic          import BaseModel
+from pydantic import BaseModel
 
 print(f"DEBUG GOOGLE_API_KEY = '{os.getenv('GOOGLE_API_KEY')}'")
-DATA_DIR       = os.getenv("DATA_DIR", ".")
-GEMINI_MODEL   = "gemini-2.5-flash-lite"
+DATA_DIR = os.getenv("DATA_DIR", ".")
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 _vector_stores: dict = {}
-_rag_chains:    dict = {}
-_histories:     dict = {}   # key → deque of LangChain message objects
+_rag_chains: dict = {}
+_histories: dict = {}   # key → deque of LangChain message objects
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -76,8 +79,8 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 
     for _, row in df.iterrows():
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
-        desc   = str(row.get("description", ""))[:600]
-        text   = (
+        desc = str(row.get("description", ""))[:600]
+        text = (
             f"Job Title: {row.get('title', 'Unknown')}\n"
             f"Company: {row.get('company', 'Unknown')}\n"
             f"Location: {row.get('location_city', 'Unknown')}, {row.get('location_state', '')}\n"
@@ -96,14 +99,14 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
         ))
 
     # Aggregate summary document — deduplicate first so stats match the website
-    dedup_cols  = [c for c in ["title", "company", "apply_link"] if c in df.columns]
-    unique_df   = df.drop_duplicates(subset=dedup_cols) if dedup_cols else df
-    total       = len(unique_df)
-    remote_pct  = round(unique_df["is_remote"].mean() * 100, 1) if total else 0
-    top_cities  = unique_df["location_city"].value_counts().head(5).to_dict()
-    all_skills  = [s for row in unique_df["skills_found"] for s in row]
-    top_skills  = [s for s, _ in Counter(all_skills).most_common(20)]
-    role_dist  = (df["role_category"].value_counts().head(8).to_dict()
+    dedup_cols = [c for c in ["title", "company", "apply_link"] if c in df.columns]
+    unique_df = df.drop_duplicates(subset=dedup_cols) if dedup_cols else df
+    total = len(unique_df)
+    remote_pct = round(unique_df["is_remote"].mean() * 100, 1) if total else 0
+    top_cities = unique_df["location_city"].value_counts().head(5).to_dict()
+    all_skills = [s for row in unique_df["skills_found"] for s in row]
+    top_skills = [s for s, _ in Counter(all_skills).most_common(20)]
+    role_dist = (df["role_category"].value_counts().head(8).to_dict()
                   if "role_category" in df.columns else {})
 
     summary = (
@@ -116,9 +119,7 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
         f"Unique companies: {df['company'].nunique()}\n"
         f"Scraped dates: {sorted(df['scraped_date'].unique().tolist())}\n"
     )
-    docs.append(Document(page_content=summary,
-                         metadata={"type": "summary", "season": season, "year": year}))
-
+    docs.append(Document(page_content=summary, metadata={"type": "summary", "season": season, "year": year}))
     print(f"  📄 Built {len(docs)} documents for {season} {year}")
     return docs
 
@@ -127,191 +128,163 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 #  VECTOR STORE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_vector_store(docs: list, api_key: str) -> FAISS:
+def _build_vector_store(docs: list, api_key: str = None) -> FAISS:
+    # Fallback to env variable if api_key parameter isn't provided directly
+    if not api_key:
+        api_key = os.getenv("GOOGLE_API_KEY")
+    
+    if not api_key:
+        raise ValueError("RAG Vector Store initialization failed: 'GOOGLE_API_KEY' is missing or not set in environment.")
+
     # Separate summary docs (keep whole) from job docs (can split if huge)
     summary_docs = [d for d in docs if d.metadata.get('type') == 'summary']
-    job_docs     = [d for d in docs if d.metadata.get('type') != 'summary']
+    job_docs = [d for d in docs if d.metadata.get('type') != 'summary']
 
-    # Only split job docs that exceed the chunk size
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800, chunk_overlap=100, separators=["\n\n", "\n", " "]
-    )
-    job_chunks = splitter.split_documents(job_docs)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    final_docs = summary_docs + splitter.split_documents(job_docs)
 
-    # Always keep summary docs intact (they contain the skill aggregates)
-    all_chunks = summary_docs + job_chunks
-    print(f"  🔢 {len(all_chunks)} chunks ({len(summary_docs)} summary + {len(job_chunks)} job) → embedding locally...")
+    print(f"  ⚡ Creating vector store with {len(final_docs)} total chunks...")
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=api_key,
+        model="text-embedding-004", 
+        google_api_key=api_key
     )
-    vs = FAISS.from_documents(all_chunks, embeddings)
-    print("  ✅ Vector store ready")
-    return vs
+    db = FAISS.from_documents(final_docs, embeddings)
+    return db
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  LCEL CHAIN  (LangChain v0.3 — no ConversationalRetrievalChain, no Memory class)
+#  RAG MAIN PIPELINE CREATOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_SYSTEM = (
-    "You are Co-operator AI, an expert career assistant embedded in the Co-operator "
-    "platform — a real-time co-op job intelligence tool for Canadian university students.\n\n"
-    "You have TWO knowledge sources — use BOTH:\n"
-    "1. Live {season} {year} co-op job data (retrieved context below)\n"
-    "2. Your own general knowledge about careers, skills, and learning resources\n\n"
-    "Guidelines:\n"
-    "- Be concise but informative. Use bullet points for lists.\n"
-    "- When citing specific jobs, mention the company and title.\n"
-    "- If the user asks for job counts or stats, give exact numbers from the data.\n"
-    "- When asked about skills, ALWAYS look for the DATASET SUMMARY section in the context —\n"
-    "  it lists the top 20 demanded skills. Use those numbers to answer. Never say skills are\n"
-    "  not specified if a summary document is present in the context.\n"
-    "- Individual job docs may say 'Skills Required: not specified' — ignore those and use\n"
-    "  the summary aggregate instead when answering skill-related questions.\n"
-    "- For questions about HOW TO LEARN a skill (tutorials, courses, resources, tips):\n"
-    "  Answer freely using your general knowledge. Do NOT say you lack resources —\n"
-    "  you are a career assistant and helping students learn is core to your role.\n"
-    "- For questions about salaries, interview prep, resume tips, career paths:\n"
-    "  Answer using your general knowledge, optionally grounding it in the job data.\n"
-    "- Only say you cannot help if the question is completely unrelated to careers or jobs.\n\n"
-    "Retrieved job context:\n{context}"
-)
-
-
-def _build_chain(vs: FAISS, season: str, year: int, api_key: str):
-    llm = ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        google_api_key=api_key,
-        temperature=0.3,
-        max_output_tokens=1024,
-    )
-    retriever = vs.as_retriever(search_type="mmr", search_kwargs={"k": 8, "fetch_k": 30})
-
-    system_text = _SYSTEM.replace("{season}", season).replace("{year}", str(year))
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_text),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question}"),
-    ])
-
-    def retrieve_and_inject(inputs: dict) -> dict:
-        docs = retriever.invoke(inputs["question"])
-        # Always prepend the summary doc for skill/stats queries so the
-        # model always sees the aggregated skill counts
-        skill_keywords = ["skill", "skills", "require", "top", "most", "common",
-                          "demand", "popular", "needed", "languages", "tools"]
-        q_lower = inputs["question"].lower()
-        if any(kw in q_lower for kw in skill_keywords):
-            summary_results = vs.similarity_search(
-                "dataset summary skills demanded", k=1,
-                filter={"type": "summary"}
-            )
-            # Prepend summary so it appears first in context
-            seen = {d.page_content for d in summary_results}
-            docs = summary_results + [d for d in docs if d.page_content not in seen]
-        inputs["context"] = "\n\n".join(d.page_content for d in docs)
-        return inputs
-
-    chain = RunnableLambda(retrieve_and_inject) | prompt | llm | StrOutputParser()
-    return chain
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PUBLIC API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_init_errors: dict = {}   # key → human-readable failure reason
-
+_init_errors = {}
 
 def init_rag(season: str, year: int) -> bool:
-    load_dotenv(override=False)
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-
+    season = season.capitalize()
     key = f"{season}_{year}"
     parquet_path = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
 
     if not os.path.exists(parquet_path):
-        msg = (f"No job data file found at '{parquet_path}'. "
-               f"Please scrape {season} {year} jobs from the dashboard first.")
-        print(f"  ⚠️  RAG: {msg}")
-        _init_errors[key] = msg
+        _init_errors[key] = f"Parquet dataset file not found: {parquet_path}"
         return False
 
-    if not GOOGLE_API_KEY:
-        msg = ("GOOGLE_API_KEY is not set in your environment / .env file. "
-               "The chatbot requires a valid Gemini API key to function.")
-        print(f"  ⚠️  RAG: {msg}")
-        _init_errors[key] = msg
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        _init_errors[key] = "Missing GOOGLE_API_KEY environment variable."
         return False
 
     try:
-        print(f"  🤖 RAG: initialising chain for {key} (parquet={parquet_path}) …")
         docs = _load_parquet_docs(parquet_path, season, year)
-        vs   = _build_vector_store(docs)
-        _vector_stores[key] = vs
-        _rag_chains[key]    = _build_chain(vs, season, year)
-        _histories[key]     = deque(maxlen=12)   # 6 turns × 2 messages
-        _init_errors.pop(key, None)              # clear any previous error
-        print(f"  ✅ RAG chain ready for {key}")
+        db = _build_vector_store(docs, api_key=api_key)
+        retriever = db.as_retriever(search_kwargs={"k": 6})
+
+        llm = ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            google_api_key=api_key,
+            temperature=0.3
+        )
+
+        # Build LCEL context chain
+        def format_docs(documents):
+            return "\n\n---\n\n".join(d.page_content for d in documents)
+
+        context_chain = RunnableLambda(retriever) | RunnableLambda(format_docs)
+
+        # Context-aware Prompt Setup
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", (
+                "You are the Co-op Analytics Chatbot Assistant, an expert data concierge.\n"
+                "Your objective is to answer questions about the scraped co-op and internship jobs for {season} {year}.\n\n"
+                "CRITICAL INSTRUCTIONS:\n"
+                "1. Base your answer strictly on the provided Context documents extracted from the dataset.\n"
+                "2. If the user asks general or statistical metrics (e.g. total job count, top skills), look at the 'DATASET SUMMARY' document block provided inside the context.\n"
+                "3. If details are absent, say: 'I cannot find that information in the dataset.' Do not hallucinate or make up metrics.\n"
+                "4. Be structured, professional, and clear.\n\n"
+                "Context Data:\n{context}"
+            )),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}")
+        ])
+
+        # Core chain using LangChain Expression Language (LCEL)
+        rag_chain = (
+            {
+                "context": context_chain,
+                "question": lambda x: x["question"],
+                "chat_history": lambda x: x["chat_history"],
+                "season": lambda x: season,
+                "year": lambda x: str(year)
+            }
+            | prompt
+            | llm
+            | StrOutputParser()
+        )
+
+        _vector_stores[key] = db
+        _rag_chains[key] = rag_chain
+        _init_errors[key] = None
+        print(f"  ✅ RAG Pipeline successfully initialized for {key}!")
         return True
+
     except Exception as e:
         import traceback
-        msg = f"RAG initialisation error: {e}"
-        print(f"  ❌ {msg}\n{traceback.format_exc()}")
-        _init_errors[key] = msg
+        err_msg = f"RAG initialisation error: {str(e)}"
+        print(f"  ❌ {err_msg}")
+        traceback.print_exc()
+        _init_errors[key] = err_msg
         return False
-    
 
 
-def ask(question: str, season: str, year: int) -> str:
-    key = f"{season}_{year}"
-    if key not in _rag_chains:
-        ok = init_rag(season, year)
-        if not ok:
-            reason = _init_errors.get(key, "Unknown initialisation error.")
-            return f"⚠️ The chatbot couldn't start: {reason}"
+# ── FastAPI Endpoints ─────────────────────────────────────────────────────────
 
-    chain   = _rag_chains[key]
-    history = list(_histories[key])
-
-    try:
-        answer = chain.invoke({"question": question, "chat_history": history})
-        _histories[key].append(HumanMessage(content=question))
-        _histories[key].append(AIMessage(content=answer))
-        return answer
-    except Exception as e:
-        return f"Error generating response: {e}"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  FASTAPI ROUTER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-chat_router = APIRouter(prefix="/api/chat", tags=["chatbot"])
-
+chat_router = APIRouter(prefix="/api/chat", tags=["Chatbot"])
 
 class ChatRequest(BaseModel):
-    question: str
-    season:   str = "Summer"
-    year:     int = 2026
-
+    message: str
+    session_id: str = "default"
+    season: str = "Summer"
+    year: int = 2026
 
 class ChatResponse(BaseModel):
     answer: str
     season: str
-    year:   int
-    ready:  bool
-
+    year: int
+    ready: bool
 
 @chat_router.post("", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     season = req.season.capitalize()
-    if season not in ["Summer", "Fall", "Winter"]:
-        return JSONResponse(status_code=400, content={"error": "Invalid season"})
-    loop   = asyncio.get_event_loop()
-    answer = await loop.run_in_executor(None, ask, req.question, season, req.year)
+    key = f"{season}_{req.year}"
+
+    # Auto-initialize on demand if not ready
+    if key not in _rag_chains:
+        success = await asyncio.get_event_loop().run_in_executor(None, init_rag, season, req.year)
+        if not success:
+            err_msg = _init_errors.get(key, "Unknown RAG initialization error.")
+            return ChatResponse(
+                answer=f"⚠️ The chatbot couldn't start: {err_msg}",
+                season=season, year=req.year, ready=False
+            )
+
+    # Manage rolling in-memory history (last 10 interactions)
+    hist_key = f"{req.session_id}_{key}"
+    if hist_key not in _histories:
+        _histories[hist_key] = deque(maxlen=10)
+    history = _histories[hist_key]
+
+    chain = _rag_chains[key]
+    
+    try:
+        answer = await asyncio.get_event_loop().run_in_executor(
+            None, 
+            lambda: chain.invoke({"question": req.message, "chat_history": list(history)})
+        )
+    except Exception as e:
+        answer = f"⚠️ An error occurred while executing the chain: {str(e)}"
+
+    # Record context sequence history
+    history.append(HumanMessage(content=req.message))
+    history.append(AIMessage(content=answer))
+
     return ChatResponse(answer=answer, season=season, year=req.year,
                         ready=f"{season}_{req.year}" in _rag_chains)
 
@@ -319,26 +292,22 @@ async def chat_endpoint(req: ChatRequest):
 @chat_router.get("/status/{season}/{year}")
 async def chat_status(season: str, year: int):
     season = season.capitalize()
-    key    = f"{season}_{year}"
+    key = f"{season}_{year}"
     return {
         "season": season,
-        "year":   year,
-        "ready":  key in _rag_chains,
-        "error":  _init_errors.get(key),   # None when healthy
+        "year": year,
+        "ready": key in _rag_chains,
+        "error": _init_errors.get(key),   # None when healthy
     }
 
 
 @chat_router.post("/init/{season}/{year}")
 async def chat_init(season: str, year: int):
     season = season.capitalize()
-    loop   = asyncio.get_event_loop()
-    ok     = await loop.run_in_executor(None, init_rag, season, year)
-    return {"season": season, "year": year, "initialized": ok}
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(None, init_rag, season, year)
+    return {{"season": season, "year": year, "initialized": ok}}
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  STANDALONE TEST
-# ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
@@ -348,11 +317,3 @@ if __name__ == "__main__":
     if not init_rag(season, year):
         print("Failed. Check GOOGLE_API_KEY and parquet file.")
         sys.exit(1)
-
-    for q in [
-        "How many jobs are in the dataset?",
-        "What are the top 5 most demanded technical skills?",
-        "Are there remote software engineering positions?",
-        "Which companies are hiring the most?",
-    ]:
-        print(f"\n❓ {q}\n💬 {ask(q, season, year)}")
