@@ -35,7 +35,6 @@ from pydantic          import BaseModel
 load_dotenv()
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
-GEMINI_EMBED   = "models/embedding-001"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
@@ -144,7 +143,7 @@ def _build_vector_store(docs: list) -> FAISS:
     all_chunks = summary_docs + job_chunks
     print(f"  🔢 {len(all_chunks)} chunks ({len(summary_docs)} summary + {len(job_chunks)} job) → embedding locally...")
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001",
+        model="models/text-embedding-004",
         google_api_key=GOOGLE_API_KEY,
     )
     vs = FAISS.from_documents(all_chunks, embeddings)
