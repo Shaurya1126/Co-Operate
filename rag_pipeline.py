@@ -2,9 +2,9 @@
 rag_pipeline.py
 ───────────────
 Ultra-optimized RAG pipeline powered by Gemini 2.5 Flash-Lite via the google.genai SDK.
-Implements local semantic embeddings, FAISS Vector database indexing, disk persistence,
-strict context text compression, conditional summary logic, active cache layering, 
-and aggressive token minimization.
+Implements lazy-loading model initialization, local semantic embeddings, FAISS Vector 
+database indexing, disk persistence, strict context text compression, conditional summary logic, 
+active cache layering, and aggressive token minimization.
 """
 
 import os
@@ -40,10 +40,18 @@ GEMINI_MODEL_FALLBACK = "gemini-2.5-flash"
 
 print(f"  [RAG Engine] Active Text Model: {GEMINI_MODEL}")
 
-# Initialize local embedding model globally (Zero Gemini API costs for vectorization)
-print("  [RAG Engine] Loading Local Embedding Model (all-MiniLM-L6-v2)...")
-_embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+# Lazy initialization placeholders for local embedding model (Saves container RAM on startup)
+_embed_model = None   
 _embedding_dim = 384  # Dimensionality of all-MiniLM-L6-v2
+
+def get_embedding_model():
+    """Thread-safe lazy-initializer for the SentenceTransformer model."""
+    global _embed_model
+    if _embed_model is None:
+        print("  [RAG Engine] Lazy Loading Local Embedding Model (all-MiniLM-L6-v2)...")
+        _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _embed_model
+
 
 # ── Performance & Optimization Memory Stores ──────────────────────────────────
 _vector_indexes: dict = {}  # Global store for FAISS Inner Product indexes
@@ -128,10 +136,11 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
             }
         ))
 
-    # Generate Local Embeddings using CPU vectors
+    # Generate Local Embeddings using CPU vectors via Lazy Loading Model
+    embed_engine = get_embedding_model()
     print(f"  [Embedding] Encoding {len(docs)} objects locally via all-MiniLM-L6-v2...")
     texts = [doc.page_content for doc in docs]
-    embeddings = _embed_model.encode(texts, batch_size=32, show_progress_bar=False).astype("float32")
+    embeddings = embed_engine.encode(texts, batch_size=32, show_progress_bar=False).astype("float32")
 
     # High-Impact: Use Normalized Cosine Similarity (IndexFlatIP) instead of Euclidean L2
     faiss.normalize_L2(embeddings)
@@ -218,13 +227,14 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
             words = [w for w in q_lower.split() if len(w) > 3]
             company_filters = [d for d in all_docs if any(w in d.metadata["company"] for w in words)]
             
+            embed_engine = get_embedding_model()
             if company_filters:
                 # If explicit tracking filters apply, execute vector alignment against that subset
                 subset_texts = [d.page_content for d in company_filters]
-                sub_embs = _embed_model.encode(subset_texts, show_progress_bar=False).astype("float32")
+                sub_embs = embed_engine.encode(subset_texts, show_progress_bar=False).astype("float32")
                 faiss.normalize_L2(sub_embs)
                 
-                q_emb = _embed_model.encode([inputs["question"]]).astype("float32")
+                q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
                 
                 scores = np.dot(sub_embs, q_emb.T).flatten()
@@ -237,7 +247,7 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
                         matched_chunks.append(company_filters[idx].page_content)
             else:
                 # Execution Path: Global Dense Vector Store Sweep via Cosine Inner Product
-                q_emb = _embed_model.encode([inputs["question"]]).astype("float32")
+                q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
                 
                 # Optimization 4: Limit context search strictly to k=4 most relevant items
