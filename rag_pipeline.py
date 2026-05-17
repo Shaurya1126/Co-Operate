@@ -13,7 +13,7 @@ import os
 import json
 import asyncio
 from collections import Counter, deque
-
+import time
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -128,6 +128,8 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 #  VECTOR STORE
 # ═══════════════════════════════════════════════════════════════════════════════
 
+import time  # Ensure time is imported at the top of your file if it isn't already
+
 def _build_vector_store(docs: list, api_key: str = None) -> FAISS:
     # Fallback to env variable if api_key parameter isn't provided directly
     if not api_key:
@@ -143,14 +145,36 @@ def _build_vector_store(docs: list, api_key: str = None) -> FAISS:
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     final_docs = summary_docs + splitter.split_documents(job_docs)
 
-    print(f"  ⚡ Creating vector store with {len(final_docs)} total chunks...")
+    print(f"  ⚡ Found {len(final_docs)} total chunks. Initializing rate-limited FAISS build...")
     
-    # CHANGED: Swapped "text-embedding-004" with the fully supported "gemini-embedding-001"
     embeddings = GoogleGenerativeAIEmbeddings(
         model="gemini-embedding-001", 
         google_api_key=api_key
     )
-    db = FAISS.from_documents(final_docs, embeddings)
+
+    # ── RATE LIMIT BYPASS: Batching Document Ingestion ──
+    # The free tier allows 100 embedding requests/min. We'll use small batches.
+    BATCH_SIZE = 25 
+    DELAY_SECONDS = 15  # Pause between batches to guarantee we stay under the 100/min limit
+
+    # Initialize the FAISS vector store with the first batch
+    first_batch = final_docs[:BATCH_SIZE]
+    print(f"  📦 Processing batch 1/{((len(final_docs) - 1) // BATCH_SIZE) + 1} ({len(first_batch)} chunks)...")
+    db = FAISS.from_documents(first_batch, embeddings)
+
+    # Progressively add subsequent batches with a strict cooldown delay
+    for i in range(BATCH_SIZE, len(final_docs), BATCH_SIZE):
+        batch = final_docs[i : i + BATCH_SIZE]
+        batch_num = (i // BATCH_SIZE) + 1
+        total_batches = ((len(final_docs) - 1) // BATCH_SIZE) + 1
+        
+        print(f"  ⏳ Sleeping for {DELAY_SECONDS}s to protect API rate limit limits...")
+        time.sleep(DELAY_SECONDS)
+        
+        print(f"  📦 Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
+        db.add_documents(batch)
+
+    print("  ✅ Vector store successfully built without exhausting quota limits!")
     return db
 
 # ═══════════════════════════════════════════════════════════════════════════════
