@@ -32,7 +32,7 @@ from fastapi           import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic          import BaseModel
 
-load_dotenv()
+load_dotenv(override=False)
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
 GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY", "")
