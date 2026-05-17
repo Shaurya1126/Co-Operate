@@ -58,8 +58,8 @@ async def lifespan(app):
     if not job_scheduler.running:
         job_scheduler.start()
     
-    # LAZY LOADING ACTIVE: Automatic resource loops initialization turned off 
-    # to protect Free Tier daily request allowances.
+    # LAZY LOADING ACTIVE: Background thread loops are deactivated 
+    # to maintain strict compliance with Free Tier quota systems.
     yield
     
     # Shutdown
