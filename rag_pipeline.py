@@ -25,8 +25,7 @@ from langchain_core.messages           import HumanMessage, AIMessage
 from langchain_core.output_parsers     import StrOutputParser
 from langchain_core.runnables          import RunnableLambda
 from langchain_community.vectorstores  import FAISS
-from langchain_huggingface             import HuggingFaceEmbeddings
-from langchain_google_genai            import ChatGoogleGenerativeAI
+from langchain_google_genai            import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 from fastapi           import APIRouter
@@ -36,6 +35,7 @@ from pydantic          import BaseModel
 load_dotenv()
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 GEMINI_MODEL   = "gemini-2.5-flash-lite"
+GEMINI_EMBED   = "models/embedding-001"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
@@ -143,7 +143,10 @@ def _build_vector_store(docs: list) -> FAISS:
     # Always keep summary docs intact (they contain the skill aggregates)
     all_chunks = summary_docs + job_chunks
     print(f"  🔢 {len(all_chunks)} chunks ({len(summary_docs)} summary + {len(job_chunks)} job) → embedding locally...")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001",
+        google_api_key=GOOGLE_API_KEY,
+    )
     vs = FAISS.from_documents(all_chunks, embeddings)
     print("  ✅ Vector store ready")
     return vs

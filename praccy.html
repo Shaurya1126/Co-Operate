@@ -1608,7 +1608,14 @@ async function init() {
     seasons.forEach((s, i) => {
       const pill = document.createElement('div');
       pill.className = `season-pill${i === 0 ? ' active' : ''}`;
-      pill.innerHTML = s.label;
+      // Show a dot indicator if this season has scraped data
+      const dot = s.has_data
+        ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-left:5px;vertical-align:middle"></span>`
+        : '';
+      const dateHint = s.has_data && s.date_count >= 2
+        ? `<span style="font-size:0.65rem;opacity:0.7;margin-left:3px">(${s.date_count}d)</span>`
+        : '';
+      pill.innerHTML = s.label + dot + dateHint;
       pill.onclick = () => selectSeason(s.season, s.year, pill);
       pillContainer.appendChild(pill);
     });
@@ -2615,26 +2622,49 @@ function toggleChat() {
     document.getElementById('chat-badge').style.display = 'none';
     document.getElementById('chat-input').focus();
     checkChatReady();
+  } else {
+    // Stop polling when window is closed
+    if (_chatReadyPoller) { clearInterval(_chatReadyPoller); _chatReadyPoller = null; }
   }
 }
 
+let _chatReadyPoller = null;
+
 async function checkChatReady() {
   const label = document.getElementById('chat-status-label');
-  try {
-    const res = await fetch(`${API}/api/chat/status/${currentSeason}/${currentSeasonYear}`).then(r => r.json());
-    if (res.ready) {
-      label.textContent = `${currentSeason} ${currentSeasonYear} data loaded ✓`;
-      label.style.color = 'rgba(78,200,140,0.9)';
-    } else if (res.error) {
-      label.textContent = res.error;
+
+  // Clear any existing poller so we don't stack them
+  if (_chatReadyPoller) { clearInterval(_chatReadyPoller); _chatReadyPoller = null; }
+
+  async function _poll() {
+    try {
+      const res = await fetch(`${API}/api/chat/status/${currentSeason}/${currentSeasonYear}`).then(r => r.json());
+      if (res.ready) {
+        label.textContent = `${currentSeason} ${currentSeasonYear} — ready`;
+        label.style.color = 'rgba(78,200,140,0.85)';
+        // Stop polling once ready
+        if (_chatReadyPoller) { clearInterval(_chatReadyPoller); _chatReadyPoller = null; }
+      } else if (res.error) {
+        // A real config error (e.g. missing API key) — stop polling, show error
+        label.textContent = res.error;
+        label.style.color = 'rgba(220,80,80,0.8)';
+        if (_chatReadyPoller) { clearInterval(_chatReadyPoller); _chatReadyPoller = null; }
+      } else {
+        // Still initialising — keep polling
+        label.textContent = 'Initialising…';
+        label.style.color = 'rgba(247,244,239,0.35)';
+      }
+    } catch(e) {
+      label.textContent = 'Offline — check API';
       label.style.color = 'rgba(220,80,80,0.8)';
-    } else {
-      label.textContent = 'Initialising AI — scrape data first';
-      label.style.color = 'rgba(247,200,80,0.8)';
+      if (_chatReadyPoller) { clearInterval(_chatReadyPoller); _chatReadyPoller = null; }
     }
-  } catch(e) {
-    label.textContent = 'AI offline — check API';
-    label.style.color = 'rgba(220,80,80,0.8)';
+  }
+
+  // Run immediately, then every 4 seconds until ready
+  await _poll();
+  if (!_chatReadyPoller && document.getElementById('chat-window').classList.contains('open')) {
+    _chatReadyPoller = setInterval(_poll, 4000);
   }
 }
 
