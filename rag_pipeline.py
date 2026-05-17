@@ -22,9 +22,9 @@ from langchain_text_splitters          import RecursiveCharacterTextSplitter
 from langchain_core.documents          import Document
 from langchain_core.prompts            import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages           import HumanMessage, AIMessage
-from langchain_core.output_parsers     import StrOutputParser
 from langchain_core.runnables          import RunnableLambda
-from langchain_google_genai            import ChatGoogleGenerativeAI
+from google import genai as _genai
+from google.genai import types as _genai_types
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 from fastapi           import APIRouter
@@ -33,7 +33,7 @@ from pydantic          import BaseModel
 
 print(f"DEBUG GOOGLE_API_KEY = '{os.getenv('GOOGLE_API_KEY')}'")
 DATA_DIR       = os.getenv("DATA_DIR", ".")
-GEMINI_MODEL   = "gemini-1.5-flash"
+GEMINI_MODEL   = "gemini-2.5-flash-lite"
 
 # ── Safe In-memory Stores (Protects against Free Tier Token Exhaustion) ──
 _raw_documents: dict = {}   # key -> list of Documents
@@ -153,12 +153,25 @@ _SYSTEM = (
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_chain(season: str, year: int, api_key: str):
-    llm = ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        google_api_key=api_key,
-        temperature=0.3,
-        max_output_tokens=800,
-    )
+    # Use google.genai SDK directly — langchain_google_genai routes through
+    # v1beta which does not support current model names
+    genai_client = _genai.Client(api_key=api_key)
+
+    class _DirectGeminiLLM:
+        """Minimal LLM wrapper that calls google.genai directly."""
+        def invoke(self, prompt_value) -> str:
+            # prompt_value is a StringPromptValue or ChatPromptValue
+            text = prompt_value.to_string() if hasattr(prompt_value, "to_string") else str(prompt_value)
+            response = genai_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=text,
+                config=_genai_types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=800,
+                )
+            )
+            return response.text
+    llm = _DirectGeminiLLM()
     
     system_text = _SYSTEM.replace("{season}", season).replace("{year}", str(year))
 
@@ -192,7 +205,13 @@ def _build_chain(season: str, year: int, api_key: str):
         inputs["context"] = "\n\n---\n\n".join(d.page_content for d in final_context_docs)
         return inputs
 
-    chain = RunnableLambda(intelligent_match_context) | prompt | llm | StrOutputParser()
+    # Build chain manually since _DirectGeminiLLM is not a LangChain Runnable
+    from langchain_core.runnables import RunnableLambda as _RL
+    def _full_chain(inputs: dict) -> str:
+        enriched   = intelligent_match_context(inputs)
+        prompt_val = prompt.invoke(enriched)
+        return llm.invoke(prompt_val)
+    chain = _RL(_full_chain)
     return chain
 
 # ═══════════════════════════════════════════════════════════════════════════════
