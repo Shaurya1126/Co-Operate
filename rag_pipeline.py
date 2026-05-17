@@ -2,12 +2,12 @@
 rag_pipeline.py
 ───────────────
 RAG pipeline powered by Gemini via the google.genai SDK.
-Does NOT use langchain_google_genai — that package routes through the
-deprecated v1beta API endpoint which rejects current model names.
 
-Exposes a FastAPI router that plugs into api.py:
-    from rag_pipeline import chat_router, init_rag as _rag_init
-    app.include_router(chat_router)
+IMPORTANT — model name changes as of 2026:
+  - gemini-1.5-flash, gemini-1.5-flash-8b  → deprecated / unreliable
+  - gemini-2.0-flash, gemini-2.0-flash-lite → SHUT DOWN June 1 2026
+  - gemini-2.5-flash-lite                   → FREE tier, use this
+  - gemini-2.5-flash                         → FREE tier fallback
 """
 
 import os
@@ -34,13 +34,13 @@ load_dotenv(override=False)
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
 # ── Model selection ───────────────────────────────────────────────────────────
-# gemini-1.5-flash-8b  → free tier (15 RPM, 1000 RPD) — use this by default
-# gemini-1.5-flash     → free tier (15 RPM, 1500 RPD) — fallback
-# gemini-2.0-flash     → PAID only — do NOT use on free API keys
-GEMINI_MODEL         = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-8b")
-GEMINI_MODEL_FALLBACK = "gemini-1.5-flash"
+# gemini-2.5-flash-lite  → free tier, fastest, use this as default
+# gemini-2.5-flash       → free tier, smarter, used as fallback
+# DO NOT use 1.5-flash-8b, 2.0-flash — deprecated/shut down in 2026
+GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+GEMINI_MODEL_FALLBACK = "gemini-2.5-flash"
 
-print(f"  🤖 RAG using model: {GEMINI_MODEL}")
+print(f"  RAG using model: {GEMINI_MODEL}")
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 _raw_documents: dict = {}
@@ -56,7 +56,6 @@ _init_errors:   dict = {}
 def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
     df = pd.read_parquet(parquet_path)
 
-    # Normalise skills_found column
     if "skills_found" in df.columns:
         df["skills_found"] = df["skills_found"].apply(
             lambda x: list(x) if isinstance(x, (set, list)) else []
@@ -81,7 +80,6 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
 
     docs = []
 
-    # Individual job documents (capped at 100)
     for _, row in df.head(100).iterrows():
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
         desc   = str(row.get("description", ""))[:300]
@@ -151,14 +149,11 @@ _SYSTEM = (
     "- Be concise but informative. Use bullet points for lists.\n"
     "- When citing specific jobs, mention the company and title.\n"
     "- If the user asks for job counts or stats, give exact numbers from the data.\n"
-    "- When asked about skills, ALWAYS use the DATASET SUMMARY section — it lists the\n"
-    "  top 20 demanded skills. Never say skills are not specified if the summary is present.\n"
+    "- When asked about skills, ALWAYS use the DATASET SUMMARY section.\n"
     "- Individual job docs may say 'Skills Required: not specified' — ignore those;\n"
     "  use the summary aggregate for skill-related questions.\n"
-    "- For HOW TO LEARN a skill (tutorials, courses, resources): answer freely using\n"
-    "  your general knowledge. Never say you lack resources.\n"
-    "- For salaries, interview prep, resume tips, career paths: use your general\n"
-    "  knowledge, optionally grounding answers in the job data.\n"
+    "- For HOW TO LEARN a skill: answer freely using your general knowledge.\n"
+    "- For salaries, interview prep, resume tips: use your general knowledge.\n"
     "- Only decline if the question is completely unrelated to careers or jobs.\n\n"
     "Retrieved job context:\n{context}"
 )
@@ -222,7 +217,7 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
             max_output_tokens=800,
         )
 
-        # ── Try primary model, fall back to gemini-1.5-flash if needed ─────
+        # Try primary model, fall back if unavailable
         models_to_try = [GEMINI_MODEL]
         if GEMINI_MODEL != GEMINI_MODEL_FALLBACK:
             models_to_try.append(GEMINI_MODEL_FALLBACK)
@@ -239,11 +234,12 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
             except Exception as e:
                 last_err = e
                 err_str  = str(e)
-                # Only fall back on auth/model errors, not on genuine quota hits
-                if any(code in err_str for code in ["403", "404", "invalid", "not found"]):
-                    print(f"  Model {model} unavailable ({err_str[:80]}) — trying fallback...")
+                # Only try fallback on model-availability errors
+                if any(code in err_str for code in ["403", "404", "invalid", "not found",
+                                                     "MODEL_NOT_FOUND", "deprecated"]):
+                    print(f"  Model {model} unavailable — trying {GEMINI_MODEL_FALLBACK}...")
                     continue
-                raise  # re-raise rate limit / network errors immediately
+                raise  # re-raise rate limit / auth errors immediately
 
         raise last_err
 
@@ -270,7 +266,7 @@ def init_rag(season: str, year: int) -> bool:
         return False
 
     if not api_key:
-        msg = "GOOGLE_API_KEY is not set. Add it to your Railway environment variables."
+        msg = "GOOGLE_API_KEY is not set in Railway environment variables."
         print(f"  {msg}")
         _init_errors[key] = msg
         return False
@@ -309,37 +305,33 @@ def ask(question: str, season: str, year: int) -> str:
 
     except Exception as e:
         err = str(e)
-
-        # ── Log the REAL error so it shows in Railway logs ─────────────────
         print(f"  Gemini error (model={GEMINI_MODEL}): {err}")
 
-        # ── API key problems ───────────────────────────────────────────────
-        if any(x in err for x in ["API_KEY", "api key", "401", "403", "PERMISSION_DENIED"]):
+        if any(x in err for x in ["API_KEY", "api key", "401", "PERMISSION_DENIED"]):
             return (
-                "Authentication error — your GOOGLE_API_KEY may be invalid or missing. "
-                "Check your Railway environment variables."
+                "Authentication error — your GOOGLE_API_KEY is invalid or missing. "
+                "Check Railway environment variables."
             )
 
-        # ── Model not available on this key / tier ─────────────────────────
-        if any(x in err for x in ["404", "not found", "MODEL_NOT_FOUND", "invalid model"]):
+        if "403" in err:
             return (
-                f"The model '{GEMINI_MODEL}' is not available on your API key. "
-                f"It may require a paid plan. "
-                f"Set GEMINI_MODEL=gemini-1.5-flash-8b in your Railway environment variables "
-                f"to use the free tier model."
+                f"Access denied for model '{GEMINI_MODEL}'. "
+                "Go to aistudio.google.com, generate a fresh API key, "
+                "and update GOOGLE_API_KEY in Railway."
             )
 
-        # ── Genuine quota / rate limit ─────────────────────────────────────
+        if any(x in err for x in ["404", "not found", "MODEL_NOT_FOUND", "deprecated"]):
+            return (
+                f"Model '{GEMINI_MODEL}' not found — it may have been deprecated. "
+                "Set GEMINI_MODEL=gemini-2.5-flash-lite in Railway environment variables."
+            )
+
         if any(x in err for x in ["429", "RESOURCE_EXHAUSTED", "quota"]):
             return (
-                f"Rate limit reached on model '{GEMINI_MODEL}'. "
-                f"Free tier limits: gemini-1.5-flash-8b = 1000 req/day, "
-                f"gemini-1.5-flash = 1500 req/day. "
-                f"Try again tomorrow or set GEMINI_MODEL=gemini-1.5-flash-8b "
-                f"in Railway environment variables."
+                f"Rate limit reached on '{GEMINI_MODEL}' "
+                f"(free tier: ~500 req/day). Try again tomorrow."
             )
 
-        # ── Generic fallback — show the real error ─────────────────────────
         return f"AI error: {err[:300]}"
 
 
@@ -383,11 +375,11 @@ async def chat_status(season: str, year: int):
     season = season.capitalize()
     key    = f"{season}_{year}"
     return {
-        "season":  season,
-        "year":    year,
-        "ready":   key in _rag_chains,
-        "model":   GEMINI_MODEL,
-        "error":   _init_errors.get(key),
+        "season": season,
+        "year":   year,
+        "ready":  key in _rag_chains,
+        "model":  GEMINI_MODEL,
+        "error":  _init_errors.get(key),
     }
 
 
