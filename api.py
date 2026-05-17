@@ -2,16 +2,6 @@
 api.py
 ──────
 FastAPI backend for the Co-op Readiness Report Generator.
-
-Usage:
-    pip install fastapi uvicorn python-multipart
-    uvicorn api:app --reload --port 8000
-"""
-
-"""
-api.py
-──────
-FastAPI backend for the Co-op Readiness Report Generator.
 """
 
 import os
@@ -48,14 +38,13 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 
 # ── SAFELY LOAD RAG ROUTER COMPONENTS BEFORE LIFESPAN EVALUATION ──
 _RAG_AVAILABLE = False
-_rag_init = None
 chat_router = None
 
 try:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from rag_pipeline import chat_router, init_rag as _rag_init
+    from rag_pipeline import chat_router
     _RAG_AVAILABLE = True
-    print("  ✅ RAG Pipeline safely loaded at module start.")
+    print("  ✅ RAG Pipeline safely loaded.")
 except Exception as _rag_err:
     print(f"  ⚠️  RAG pipeline initialization deferred: {_rag_err}")
 
@@ -68,27 +57,11 @@ async def lifespan(app):
     from scheduler import scheduler as job_scheduler
     if not job_scheduler.running:
         job_scheduler.start()
-    jobs = job_scheduler.get_jobs()
-    for job in jobs:
-        print(f"  📅 Scheduled job: {job.name} — next run: {job.next_run_time}")
-
-    # Auto-init RAG for any parquet files already on disk
-    if _RAG_AVAILABLE and _rag_init is not None:
-        import threading as _threading
-        import glob as _glob
-        pattern = os.path.join(DATA_DIR, "jobs_*_*.parquet")
-        for _pq in sorted(_glob.glob(pattern)):
-            _fname = os.path.basename(_pq).replace(".parquet", "")  
-            _parts = _fname.split("_")  
-            if len(_parts) == 3 and _parts[2].isdigit():
-                _s = _parts[1].capitalize()
-                _y = int(_parts[2])
-                print(f"  🔍 Found existing parquet for {_s} {_y} — auto-initing RAG ...")
-                _threading.Thread(
-                    target=_rag_init, args=(_s, _y), daemon=True
-                ).start()
-
+    
+    # LAZY LOADING ACTIVE: Automatic resource loops initialization turned off 
+    # to protect Free Tier daily request allowances.
     yield
+    
     # Shutdown
     job_scheduler.shutdown()
     print("🛑 Scheduler shut down.")
