@@ -8,6 +8,12 @@ Usage:
     uvicorn api:app --reload --port 8000
 """
 
+"""
+api.py
+──────
+FastAPI backend for the Co-op Readiness Report Generator.
+"""
+
 import os
 import sys
 import re
@@ -36,11 +42,25 @@ from fastapi.staticfiles     import StaticFiles
 from pydantic                import BaseModel
 from dotenv import load_dotenv
 import pytz
+
 load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
-from contextlib import asynccontextmanager
+# ── SAFELY LOAD RAG ROUTER COMPONENTS BEFORE LIFESPAN EVALUATION ──
 _RAG_AVAILABLE = False
+_rag_init = None
+chat_router = None
+
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from rag_pipeline import chat_router, init_rag as _rag_init
+    _RAG_AVAILABLE = True
+    print("  ✅ RAG Pipeline safely loaded at module start.")
+except Exception as _rag_err:
+    print(f"  ⚠️  RAG pipeline initialization deferred: {_rag_err}")
+
+from contextlib import asynccontextmanager
+
 @asynccontextmanager
 async def lifespan(app):
     # Startup
@@ -53,15 +73,13 @@ async def lifespan(app):
         print(f"  📅 Scheduled job: {job.name} — next run: {job.next_run_time}")
 
     # Auto-init RAG for any parquet files already on disk
-    # Runs in background threads so startup is not blocked
-    if _RAG_AVAILABLE:
+    if _RAG_AVAILABLE and _rag_init is not None:
         import threading as _threading
         import glob as _glob
         pattern = os.path.join(DATA_DIR, "jobs_*_*.parquet")
         for _pq in sorted(_glob.glob(pattern)):
-            # Extract season and year from filename e.g. jobs_summer_2026.parquet
-            _fname = os.path.basename(_pq).replace(".parquet", "")  # jobs_summer_2026
-            _parts = _fname.split("_")  # ["jobs", "summer", "2026"]
+            _fname = os.path.basename(_pq).replace(".parquet", "")  
+            _parts = _fname.split("_")  
             if len(_parts) == 3 and _parts[2].isdigit():
                 _s = _parts[1].capitalize()
                 _y = int(_parts[2])
@@ -89,24 +107,6 @@ from report_generator import (
     build_dataframe, should_refresh, write_lock, trim_old_data, build_rising_resources
 )
 
-# ── RAG pipeline (Gemini-powered chatbot) ────────────────────────────────────
-_RAG_AVAILABLE = False
-
-try:
-    # Safely inject the directory path to system context if needed
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    # Import the router components safely
-    from rag_pipeline import chat_router, init_rag as _rag_init
-    _RAG_AVAILABLE = True
-    print("  ✅ RAG Pipeline modules successfully imported!")
-except Exception as _rag_err:
-    print(f"  ⚠️  RAG pipeline unavailable due to import error: {_rag_err}")
-    import traceback
-    traceback.print_exc()
-    _RAG_AVAILABLE = False
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  APP SETUP
 # ══════════════════════════════════════════════════════════════════════════════
@@ -116,7 +116,7 @@ app = FastAPI(title="Co-op Readiness API", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="."), name="static")
 
 # Register RAG chat router if available
-if _RAG_AVAILABLE:
+if _RAG_AVAILABLE and chat_router is not None:
     app.include_router(chat_router)
     print("  🤖 RAG chatbot router registered at /api/chat")
 
