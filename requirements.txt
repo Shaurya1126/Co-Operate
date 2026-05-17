@@ -37,4 +37,4 @@ langchain-community
 langchain-google-genai
 langchain-text-splitters
 google-generativeai
-faiss-cpu==1.7.4
+faiss-cpu>=1.9.0
