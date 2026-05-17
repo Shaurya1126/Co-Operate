@@ -39,7 +39,7 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 
 # gemini-1.5-flash free tier: 15 RPM, 1500 req/day, 1M tokens/day
 # DO NOT use gemini-2.5-flash-lite — paid preview, no free tier
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 _raw_documents: dict = {}  # key → list[Document]
