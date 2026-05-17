@@ -144,13 +144,14 @@ def _build_vector_store(docs: list, api_key: str = None) -> FAISS:
     final_docs = summary_docs + splitter.split_documents(job_docs)
 
     print(f"  ⚡ Creating vector store with {len(final_docs)} total chunks...")
+    
+    # CHANGED: Swapped "text-embedding-004" with the fully supported "gemini-embedding-001"
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="text-embedding-004", 
+        model="gemini-embedding-001", 
         google_api_key=api_key
     )
     db = FAISS.from_documents(final_docs, embeddings)
     return db
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  RAG MAIN PIPELINE CREATOR
