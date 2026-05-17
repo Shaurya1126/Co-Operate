@@ -169,11 +169,6 @@ _SYSTEM = (
 def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
     client      = _genai.Client(api_key=api_key)
     system_text = _SYSTEM.replace("{season}", season).replace("{year}", str(year))
-    prompt      = ChatPromptTemplate.from_messages([
-        ("system", system_text),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question}"),
-    ])
 
     def _retrieve(inputs: dict) -> dict:
         key      = f"{season}_{year}"
@@ -198,21 +193,38 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
         return inputs
 
     def _generate(inputs: dict) -> str:
-        rendered = prompt.invoke(inputs).to_string()
-        cfg      = _genai_types.GenerateContentConfig(
-            temperature=0.3, max_output_tokens=800
+        # 1. Build the true content structure for Gemini SDK
+        contents = []
+        
+        # Map LangChain history to Gemini SDK structure safely
+        for msg in inputs.get("chat_history", []):
+            role = "user" if msg.__class__.__name__ == "HumanMessage" else "model"
+            contents.append(_genai_types.Content(
+                role=role,
+                parts=[_genai_types.Part.from_text(text=msg.content)]
+            ))
+            
+        # Append the final query injected with the retrieved context
+        final_query = f"Retrieved job context:\n{inputs['context']}\n\nUser Question: {inputs['question']}"
+        contents.append(_genai_types.Content(
+            role="user",
+            parts=[_genai_types.Part.from_text(text=final_query)]
+        ))
+
+        # 2. Set the system instruction in the config where it belongs
+        cfg = _genai_types.GenerateContentConfig(
+            system_instruction=system_text,
+            temperature=0.3,
+            max_output_tokens=800
         )
-        try:
-            return client.models.generate_content(
-                model=GEMINI_MODEL, contents=rendered, config=cfg
-            ).text
-        except Exception as e:
-            if "NOT_FOUND" in str(e) or "404" in str(e):
-                # Retry with explicit models/ prefix
-                return client.models.generate_content(
-                    model=f"models/{GEMINI_MODEL}", contents=rendered, config=cfg
-                ).text
-            raise
+        
+        # 3. Execute call cleanly without stringified templates or model-prefixtraps
+        response = client.models.generate_content(
+            model=GEMINI_MODEL, 
+            contents=contents, 
+            config=cfg
+        )
+        return response.text
 
     def _chain(inputs: dict) -> str:
         return _generate(_retrieve(inputs))
