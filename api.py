@@ -94,22 +94,12 @@ from report_generator import (
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  APP SETUP
+#  APP SETUP (FIXED ROUTING & INTERCEPTION)
 # ══════════════════════════════════════════════════════════════════════════════
 
 app = FastAPI(title="Co-op Readiness API", version="1.0.0", lifespan=lifespan)
 
-app.mount("/static", StaticFiles(directory="."), name="static")
-
-# Register RAG chat router if available
-if _RAG_AVAILABLE and chat_router is not None:
-    app.include_router(chat_router)
-    print("  🤖 RAG chatbot router registered at /api/chat")
-
-@app.get("/")
-def serve_frontend():
-    return FileResponse("praccy.html")
-
+# 1. ADD MIDDLEWARE FIRST
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -117,12 +107,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 2. REGISTER FUNCTIONAL ROUTERS (Highest priority route matching)
+if _RAG_AVAILABLE and chat_router is not None:
+    app.include_router(chat_router)
+    print("  🤖 RAG chatbot router registered at /api/chat")
+
+# 3. DEFINE SYSTEM ENDPOINTS
+@app.get("/")
+def serve_frontend():
+    return FileResponse("praccy.html")
+
+# 4. MOUNT SPECIFIC STATIC DIRECTORIES LAST (Lowest priority fallback)
+# Note: REMOVED app.mount("/static", StaticFiles(directory="."), name="static") 
+# because mounting the root directory "." intercepts all paths (including /api) and throws 404s.
+
 OUTPUTS_DIR = Path("outputs")
 OUTPUTS_DIR.mkdir(exist_ok=True)
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
 _scrape_lock = threading.Lock()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STREAMING SCRAPE
