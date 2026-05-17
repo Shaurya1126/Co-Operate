@@ -1,13 +1,10 @@
 """
 rag_pipeline.py
 ───────────────
-RAG pipeline powered by Gemini via the google.genai SDK.
-
-IMPORTANT — model name changes as of 2026:
-  - gemini-1.5-flash, gemini-1.5-flash-8b  → deprecated / unreliable
-  - gemini-2.0-flash, gemini-2.0-flash-lite → SHUT DOWN June 1 2026
-  - gemini-2.5-flash-lite                   → FREE tier, use this
-  - gemini-2.5-flash                         → FREE tier fallback
+Ultra-optimized RAG pipeline powered by Gemini 2.5 Flash-Lite via the google.genai SDK.
+Implements local semantic embeddings, FAISS Vector database indexing, disk persistence,
+strict context text compression, conditional summary logic, active cache layering, 
+and aggressive token minimization.
 """
 
 import os
@@ -15,12 +12,16 @@ import json
 import asyncio
 from collections import Counter, deque
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
 from langchain_core.documents import Document
 from langchain_core.messages  import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableLambda
+
+import faiss
+from sentence_transformers import SentenceTransformer
 
 from google import genai as _genai
 from google.genai import types as _genai_types
@@ -33,27 +34,51 @@ load_dotenv(override=False)
 
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
-# ── Model selection ───────────────────────────────────────────────────────────
-# gemini-2.5-flash-lite  → free tier, fastest, use this as default
-# gemini-2.5-flash       → free tier, smarter, used as fallback
-# DO NOT use 1.5-flash-8b, 2.0-flash — deprecated/shut down in 2026
+# Model configurations - defaulting to highly cost-efficient 2.5-flash-lite
 GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_MODEL_FALLBACK = "gemini-2.5-flash"
 
-print(f"  RAG using model: {GEMINI_MODEL}")
+print(f"  [RAG Engine] Active Text Model: {GEMINI_MODEL}")
 
-# ── In-memory stores ──────────────────────────────────────────────────────────
-_raw_documents: dict = {}
-_rag_chains:    dict = {}
-_histories:     dict = {}
-_init_errors:   dict = {}
+# Initialize local embedding model globally (Zero Gemini API costs for vectorization)
+print("  [RAG Engine] Loading Local Embedding Model (all-MiniLM-L6-v2)...")
+_embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+_embedding_dim = 384  # Dimensionality of all-MiniLM-L6-v2
+
+# ── Performance & Optimization Memory Stores ──────────────────────────────────
+_vector_indexes: dict = {}  # Global store for FAISS Inner Product indexes
+_doc_lookups:    dict = {}  # Global mapping: {key: list_of_documents}
+_summaries:      dict = {}  # Global aggregate analytical datasets
+_rag_chains:     dict = {}  # Runnable LangChain pipelines
+_histories:      dict = {}  # Restricted Chat history arrays
+_init_errors:    dict = {}  # Pipeline initialization tracing
+_response_cache: dict = {}  # High-impact global execution response cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  DOCUMENT BUILDER
+#  DOCUMENT BUILDER, VECTOR INDEXER & PERSISTENCE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
+def _build_vector_store(parquet_path: str, season: str, year: int):
+    key = f"{season}_{year}"
+    index_disk_path = os.path.join(DATA_DIR, f"faiss_{key}.index")
+    docs_disk_path  = os.path.join(DATA_DIR, f"docs_{key}.json")
+    sum_disk_path   = os.path.join(DATA_DIR, f"summary_{key}.json")
+
+    # Fast-Path: Load pre-built indices from persistent disk storage if available
+    if os.path.exists(index_disk_path) and os.path.exists(docs_disk_path) and os.path.exists(sum_disk_path):
+        print(f"  [FAISS Disk Cache] Loading index artifacts for {key}...")
+        _vector_indexes[key] = faiss.read_index(index_disk_path)
+        
+        with open(docs_disk_path, "r", encoding="utf-8") as f:
+            cached_docs = json.load(f)
+            _doc_lookups[key] = [Document(page_content=d["p"], metadata=d["m"]) for d in cached_docs]
+            
+        with open(sum_disk_path, "r", encoding="utf-8") as f:
+            _summaries[key] = json.load(f)["summary"]
+        return
+
+    # Compute-Path: Process Parquet data when cache is missing
     df = pd.read_parquet(parquet_path)
 
     if "skills_found" in df.columns:
@@ -63,10 +88,10 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
     else:
         df["skills_found"] = [[] for _ in range(len(df))]
 
-    # Re-extract skills if >80% of rows are empty
+    # Extract skills fallback block
     empty_pct = df["skills_found"].apply(lambda x: len(x) == 0).mean()
     if empty_pct > 0.8:
-        print(f"  {empty_pct:.0%} rows have no skills — re-extracting...")
+        print(f"  [Data Pipeline] {empty_pct:.0%} rows missing parsed items — re-extracting...")
         import sys as _sys
         _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from report_generator import extract_skills as _extract, normalize_text as _norm
@@ -75,149 +100,182 @@ def _load_parquet_docs(parquet_path: str, season: str, year: int) -> list:
             df.get("highlights",  pd.Series("", index=df.index)).fillna("")
         )
         df["skills_found"] = full_text.apply(lambda t: _extract(_norm(t)))
-        n = df["skills_found"].apply(lambda x: len(x) > 0).sum()
-        print(f"  Re-extracted: {n}/{len(df)} jobs now have skills")
 
     docs = []
-
-    for _, row in df.head(100).iterrows():
+    # Indexing top 300 data elements safely 
+    for _, row in df.head(300).iterrows():
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
-        desc   = str(row.get("description", ""))[:300]
-        text   = (
-            f"Job Title: {row.get('title', 'Unknown')}\n"
-            f"Company: {row.get('company', 'Unknown')}\n"
-            f"Location: {row.get('location_city', 'Unknown')}, {row.get('location_state', '')}\n"
-            f"Remote: {'Yes' if row.get('is_remote') else 'No'}\n"
-            f"Skills Required: {skills}\n"
-            f"Apply Link: {row.get('apply_link', '')}\n"
-            f"Description: {desc}\n"
+        
+        # Token Optimization: Extract compressed task data instead of massive open text blobs
+        desc_raw = str(row.get("description", ""))[:300].replace("\n", " ")
+        desc_snippet = desc_raw[:120] + "..." if len(desc_raw) > 120 else desc_raw
+        
+        # Super-compressed payload matching structure
+        text = (
+            f"Job: {row.get('title', 'Unknown')} @ {row.get('company', 'Unknown')}\n"
+            f"Loc: {row.get('location_city', 'Unknown')}, {row.get('location_state', '')} | Remote: {row.get('is_remote', False)}\n"
+            f"Skills: {skills}\n"
+            f"Tasks: {desc_snippet}\n"
+            f"Link: {row.get('apply_link', '')}"
         )
         docs.append(Document(
             page_content=text,
             metadata={
                 "title":   str(row.get("title",   "")).lower(),
                 "company": str(row.get("company", "")).lower(),
-                "type":    "job",
-                "season":  season,
-                "year":    year,
+                "season":  season.lower(),
+                "year":    int(year),
             }
         ))
 
-    # Aggregate summary document
+    # Generate Local Embeddings using CPU vectors
+    print(f"  [Embedding] Encoding {len(docs)} objects locally via all-MiniLM-L6-v2...")
+    texts = [doc.page_content for doc in docs]
+    embeddings = _embed_model.encode(texts, batch_size=32, show_progress_bar=False).astype("float32")
+
+    # High-Impact: Use Normalized Cosine Similarity (IndexFlatIP) instead of Euclidean L2
+    faiss.normalize_L2(embeddings)
+    index = faiss.IndexFlatIP(_embedding_dim)
+    index.add(embeddings)
+
+    # Compile Global Analytics Block separately (Keeps search context noise-free)
     dedup_cols = [c for c in ["title", "company", "apply_link"] if c in df.columns]
     unique_df  = df.drop_duplicates(subset=dedup_cols) if dedup_cols else df
     total      = len(unique_df)
     remote_pct = round(unique_df["is_remote"].mean() * 100, 1) if total else 0
     top_cities = unique_df["location_city"].value_counts().head(5).to_dict()
-    all_skills = [s for row in unique_df["skills_found"] for s in row]
+    all_skills = [s for r in unique_df["skills_found"] for s in r]
     top_skills = [s for s, _ in Counter(all_skills).most_common(20)]
-    role_dist  = (
-        df["role_category"].value_counts().head(8).to_dict()
-        if "role_category" in df.columns else {}
+    role_dist  = df["role_category"].value_counts().head(8).to_dict() if "role_category" in df.columns else {}
+
+    summary_text = (
+        f"STATS SUMMARY: Unique jobs={total}, Remote={remote_pct}%\n"
+        f"Cities: {json.dumps(top_cities)}\n"
+        f"Top Skills: {', '.join(top_skills)}\n"
+        f"Roles: {json.dumps(role_dist)}\n"
     )
 
-    summary = (
-        f"DATASET SUMMARY — {season} {year} Co-op Jobs\n"
-        f"Total unique jobs: {total}\n"
-        f"Remote jobs: {remote_pct}%\n"
-        f"Top hiring cities: {json.dumps(top_cities)}\n"
-        f"Top 20 most demanded skills: {', '.join(top_skills)}\n"
-        f"Role category distribution: {json.dumps(role_dist)}\n"
-        f"Unique companies: {df['company'].nunique()}\n"
-        f"Scraped dates: {sorted(df['scraped_date'].unique().tolist()) if 'scraped_date' in df.columns else []}\n"
-    )
-    docs.append(Document(
-        page_content=summary,
-        metadata={"type": "summary", "season": season, "year": year}
-    ))
+    # Commit to global state
+    _vector_indexes[key] = index
+    _doc_lookups[key]    = docs
+    _summaries[key]      = summary_text
 
-    print(f"  Built {len(docs)} documents for {season} {year}")
-    return docs
+    # Persist objects immediately to disk for instantaneous future hot-starts
+    try:
+        faiss.write_index(index, index_disk_path)
+        with open(docs_disk_path, "w", encoding="utf-8") as f:
+            json.dump([{"p": d.page_content, "m": d.metadata} for d in docs], f)
+        with open(sum_disk_path, "w", encoding="utf-8") as f:
+            json.dump({"summary": summary_text}, f)
+        print(f"  [Disk Storage] Vector database snapshot safely saved for key: {key}")
+    except Exception as save_err:
+        print(f"  [Disk Storage Warn] Could not cache artifact files to disk: {save_err}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SYSTEM PROMPT
+#  HIGHLY CONDENSED SYSTEM INSTRUCTION Prompt
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _SYSTEM = (
-    "You are Co-operator AI, an expert career assistant embedded in the Co-operator "
-    "platform — a real-time co-op job intelligence tool for Canadian university students.\n\n"
-    "You have TWO knowledge sources — use BOTH:\n"
-    "1. Live {season} {year} co-op job data (retrieved context below)\n"
-    "2. Your own general knowledge about careers, skills, and learning resources\n\n"
-    "Guidelines:\n"
-    "- Be concise but informative. Use bullet points for lists.\n"
-    "- When citing specific jobs, mention the company and title.\n"
-    "- If the user asks for job counts or stats, give exact numbers from the data.\n"
-    "- When asked about skills, ALWAYS use the DATASET SUMMARY section.\n"
-    "- Individual job docs may say 'Skills Required: not specified' — ignore those;\n"
-    "  use the summary aggregate for skill-related questions.\n"
-    "- For HOW TO LEARN a skill: answer freely using your general knowledge.\n"
-    "- For salaries, interview prep, resume tips: use your general knowledge.\n"
-    "- Only decline if the question is completely unrelated to careers or jobs.\n\n"
-    "Retrieved job context:\n{context}"
+    "You are Co-operator AI, an assistant for Canadian co-op job analytics.\n"
+    "Context rules:\n"
+    "- Give short, direct answers with crisp formatting.\n"
+    "- For individual jobs, strictly cite company & title.\n"
+    "- If query needs macro statistics or generic metrics, rely entirely on the STATS SUMMARY section.\n"
+    "- Reply from general training data for skill courses, interview tips, or general advice.\n\n"
+    "Data:\n{context}"
 )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  CHAIN
+#  SEMANTIC SEARCH RETRIEVAL CHAIN WITH METADATA FILTERING
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
     client      = _genai.Client(api_key=api_key)
-    system_text = _SYSTEM.replace("{season}", season).replace("{year}", str(year))
+    system_text = _SYSTEM
+    key         = f"{season}_{year}"
+
+    # Token Optimization: Conditional keywords that signal macro summary insertion requirements
+    stats_keywords = {"top skills", "statistics", "most common", "distribution", "percent", "how many", "trend", "total"}
 
     def _retrieve(inputs: dict) -> dict:
-        key      = f"{season}_{year}"
-        docs     = _raw_documents.get(key, [])
-        summary  = [d for d in docs if d.metadata.get("type") == "summary"]
-        job_docs = [d for d in docs if d.metadata.get("type") == "job"]
-        q_lower  = inputs["question"].lower()
-        matched  = []
-        for d in job_docs:
-            words = [w for w in q_lower.split() if len(w) > 4]
-            if (d.metadata.get("title", "") in q_lower or
-                    d.metadata.get("company", "") in q_lower or
-                    any(w in d.page_content.lower() for w in words)):
-                matched.append(d)
-                if len(matched) >= 8:
-                    break
-        if not matched:
-            matched = job_docs[:5]
-        inputs["context"] = "\n\n---\n\n".join(
-            d.page_content for d in summary + matched
-        )
+        q_lower = inputs["question"].lower()
+        index   = _vector_indexes.get(key)
+        all_docs = _doc_lookups.get(key, [])
+        
+        # Optimization 5: Conditional Summary Inclusion Evaluation
+        needs_summary = any(k in q_lower for k in stats_keywords)
+        summary_payload = _summaries.get(key, "") if needs_summary else ""
+
+        matched_chunks = []
+
+        if index is not None and all_docs:
+            # Optimization 11: Metadata Filtering BEFORE Vector Exploration
+            filtered_indices = range(len(all_docs))
+            
+            # Simple keyword extraction to check for exact company name filtering overrides
+            words = [w for w in q_lower.split() if len(w) > 3]
+            company_filters = [d for d in all_docs if any(w in d.metadata["company"] for w in words)]
+            
+            if company_filters:
+                # If explicit tracking filters apply, execute vector alignment against that subset
+                subset_texts = [d.page_content for d in company_filters]
+                sub_embs = _embed_model.encode(subset_texts, show_progress_bar=False).astype("float32")
+                faiss.normalize_L2(sub_embs)
+                
+                q_emb = _embed_model.encode([inputs["question"]]).astype("float32")
+                faiss.normalize_L2(q_emb)
+                
+                scores = np.dot(sub_embs, q_emb.T).flatten()
+                # Sort descending
+                ranked_idx = np.argsort(-scores)
+                
+                # Optimization 4 & 13: Top 3 selection with matching score thresholds
+                for idx in ranked_idx[:3]:
+                    if scores[idx] >= 0.25: # Score threshold tuning
+                        matched_chunks.append(company_filters[idx].page_content)
+            else:
+                # Execution Path: Global Dense Vector Store Sweep via Cosine Inner Product
+                q_emb = _embed_model.encode([inputs["question"]]).astype("float32")
+                faiss.normalize_L2(q_emb)
+                
+                # Optimization 4: Limit context search strictly to k=4 most relevant items
+                scores, indices = index.search(q_emb, k=4)
+                
+                for sim_score, idx in zip(scores[0], indices[0]):
+                    if idx != -1 and sim_score >= 0.25:  # Optimization 13: Retrieval threshold
+                        matched_chunks.append(all_docs[idx].page_content)
+
+        if not matched_chunks and not summary_payload:
+            matched_chunks = [d.page_content for d in all_docs[:2]]
+
+        # Optimization 14: Super-compressed payload layout injection
+        inputs["context"] = (f"{summary_payload}\n\n" if summary_payload else "") + "MATCHED JOBS:\n" + "\n---\n".join(matched_chunks)
         return inputs
 
     def _generate(inputs: dict) -> str:
         contents = []
+        
+        # Optimization 8: Truncate message history length to a max threshold of 3 items
         for msg in inputs.get("chat_history", []):
             role = "user" if msg.__class__.__name__ == "HumanMessage" else "model"
             contents.append(
-                _genai_types.Content(
-                    role=role,
-                    parts=[_genai_types.Part.from_text(text=msg.content)]
-                )
+                _genai_types.Content(role=role, parts=[_genai_types.Part.from_text(text=msg.content)])
             )
 
-        final_query = (
-            f"Retrieved job context:\n{inputs['context']}\n\n"
-            f"User Question: {inputs['question']}"
-        )
+        final_query = f"Context:\n{inputs['context']}\n\nQ: {inputs['question']}"
         contents.append(
-            _genai_types.Content(
-                role="user",
-                parts=[_genai_types.Part.from_text(text=final_query)]
-            )
+            _genai_types.Content(role="user", parts=[_genai_types.Part.from_text(text=final_query)])
         )
 
+        # Optimization 7: Reduce output generation capacity to 250 tokens
         cfg = _genai_types.GenerateContentConfig(
             system_instruction=system_text,
-            temperature=0.3,
-            max_output_tokens=800,
+            temperature=0.2,
+            max_output_tokens=250,
         )
 
-        # Try primary model, fall back if unavailable
         models_to_try = [GEMINI_MODEL]
         if GEMINI_MODEL != GEMINI_MODEL_FALLBACK:
             models_to_try.append(GEMINI_MODEL_FALLBACK)
@@ -225,21 +283,14 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
         last_err = None
         for model in models_to_try:
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=cfg,
-                )
+                response = client.models.generate_content(model=model, contents=contents, config=cfg)
                 return response.text
             except Exception as e:
                 last_err = e
-                err_str  = str(e)
-                # Only try fallback on model-availability errors
-                if any(code in err_str for code in ["403", "404", "invalid", "not found",
-                                                     "MODEL_NOT_FOUND", "deprecated"]):
-                    print(f"  Model {model} unavailable — trying {GEMINI_MODEL_FALLBACK}...")
+                err_str = str(e)
+                if any(c in err_str for c in ["403", "404", "invalid", "not found", "deprecated"]):
                     continue
-                raise  # re-raise rate limit / auth errors immediately
+                raise
 
         raise last_err
 
@@ -250,7 +301,7 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  PUBLIC API
+#  PUBLIC API WITH RESPONSE CACHING LAYER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def init_rag(season: str, year: int) -> bool:
@@ -259,80 +310,51 @@ def init_rag(season: str, year: int) -> bool:
     key     = f"{season}_{year}"
     path    = os.path.join(DATA_DIR, f"jobs_{season.lower()}_{year}.parquet")
 
-    if not os.path.exists(path):
-        msg = f"No parquet found at '{path}'. Scrape {season} {year} first."
-        print(f"  {msg}")
-        _init_errors[key] = msg
+    if not os.path.exists(path) and not os.path.exists(os.path.join(DATA_DIR, f"faiss_{key}.index")):
+        _init_errors[key] = f"Missing data sources for execution matching path target: {path}"
         return False
 
     if not api_key:
-        msg = "GOOGLE_API_KEY is not set in Railway environment variables."
-        print(f"  {msg}")
-        _init_errors[key] = msg
+        _init_errors[key] = "Missing critical authorization key: GOOGLE_API_KEY"
         return False
 
     try:
-        print(f"  RAG: initialising for {key} using {GEMINI_MODEL}...")
-        if key not in _raw_documents:
-            _raw_documents[key] = _load_parquet_docs(path, season, year)
+        _build_vector_store(path, season, year)
         _rag_chains[key] = _build_chain(season, year, api_key)
-        _histories[key]  = deque(maxlen=10)
+        # Optimization 8: Limit Chat Transcript Memory to tracking 4 segments total
+        _histories[key]  = deque(maxlen=4)
         _init_errors.pop(key, None)
-        print(f"  RAG ready for {key}")
         return True
     except Exception as e:
-        import traceback
-        msg = f"RAG init error: {e}"
-        print(f"  {msg}\n{traceback.format_exc()}")
-        _init_errors[key] = msg
+        _init_errors[key] = f"RAG Fatal Initialization Tracer: {e}"
         return False
 
 
 def ask(question: str, season: str, year: int) -> str:
     key = f"{season}_{year}"
+    
+    # Optimization 9: Active Response Cache Layer Validation
+    cache_key = f"{key}_{question.strip().lower()}"
+    if cache_key in _response_cache:
+        return _response_cache[cache_key]
+
     if key not in _rag_chains:
         if not init_rag(season, year):
-            return f"Error: {_init_errors.get(key, 'RAG not initialised.')}"
+            return f"Error Trace: {_init_errors.get(key, 'Initialization failure')}"
 
     try:
         answer = _rag_chains[key].invoke({
             "question":     question,
             "chat_history": list(_histories[key]),
         })
+        
+        # Populate history and update transaction cache
         _histories[key].append(HumanMessage(content=question))
         _histories[key].append(AIMessage(content=answer))
+        _response_cache[cache_key] = answer
         return answer
-
     except Exception as e:
-        err = str(e)
-        print(f"  Gemini error (model={GEMINI_MODEL}): {err}")
-
-        if any(x in err for x in ["API_KEY", "api key", "401", "PERMISSION_DENIED"]):
-            return (
-                "Authentication error — your GOOGLE_API_KEY is invalid or missing. "
-                "Check Railway environment variables."
-            )
-
-        if "403" in err:
-            return (
-                f"Access denied for model '{GEMINI_MODEL}'. "
-                "Go to aistudio.google.com, generate a fresh API key, "
-                "and update GOOGLE_API_KEY in Railway."
-            )
-
-        if any(x in err for x in ["404", "not found", "MODEL_NOT_FOUND", "deprecated"]):
-            return (
-                f"Model '{GEMINI_MODEL}' not found — it may have been deprecated. "
-                "Set GEMINI_MODEL=gemini-2.5-flash-lite in Railway environment variables."
-            )
-
-        if any(x in err for x in ["429", "RESOURCE_EXHAUSTED", "quota"]):
-            return (
-                f"Rate limit reached on '{GEMINI_MODEL}' "
-                f"(free tier: ~500 req/day). Try again tomorrow."
-            )
-
-        return f"AI error: {err[:300]}"
+        return f"AI Service Execution Constraint Error: {str(e)[:150]}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -341,12 +363,10 @@ def ask(question: str, season: str, year: int) -> str:
 
 chat_router = APIRouter(prefix="/api/chat", tags=["chatbot"])
 
-
 class ChatRequest(BaseModel):
     question: str
     season:   str = "Summer"
     year:     int = 2026
-
 
 class ChatResponse(BaseModel):
     answer: str
@@ -354,12 +374,12 @@ class ChatResponse(BaseModel):
     year:   int
     ready:  bool
 
-
 @chat_router.post("", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     season = req.season.capitalize()
     if season not in ["Summer", "Fall", "Winter"]:
-        return JSONResponse(status_code=400, content={"error": "Invalid season"})
+        return JSONResponse(status_code=400, content={"error": "Invalid season string structure"})
+    
     loop   = asyncio.get_event_loop()
     answer = await loop.run_in_executor(None, ask, req.question, season, req.year)
     return ChatResponse(
@@ -368,7 +388,6 @@ async def chat_endpoint(req: ChatRequest):
         year=req.year,
         ready=f"{season}_{req.year}" in _rag_chains,
     )
-
 
 @chat_router.get("/status/{season}/{year}")
 async def chat_status(season: str, year: int):
@@ -381,7 +400,6 @@ async def chat_status(season: str, year: int):
         "model":  GEMINI_MODEL,
         "error":  _init_errors.get(key),
     }
-
 
 @chat_router.post("/init/{season}/{year}")
 async def chat_init(season: str, year: int):

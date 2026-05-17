@@ -30,11 +30,11 @@ apscheduler
 pytz
 python-dotenv
 
-# RAG pipeline
-langchain
-langchain-core
-langchain-community
-langchain-google-genai
+# RAG pipeline & Google GenAI (2026 Compatible)
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-google-genai>=2.0.0
 langchain-text-splitters
-google-generativeai
-faiss-cpu>=1.9.0
+google-genai>=0.1.0
+faiss-cpu>=1.7.4
