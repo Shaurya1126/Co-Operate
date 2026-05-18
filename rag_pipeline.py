@@ -1,9 +1,9 @@
 """
 rag_pipeline.py
 ───────────────
-Production-hardened, token-optimized RAG pipeline powered by Gemini 2.5 Flash-Lite.
-Provides highly structured, non-truncated job listings while actively managing
-upstream context windows and maximizing input/output token efficiency.
+Optimized High-Fidelity RAG pipeline powered by Gemini 2.5 Flash-Lite.
+Leverages expanded context allowances, rich document vectorization, and structured
+failsafes to deliver premium precision while preserving your API token runway.
 """
 
 import os
@@ -47,7 +47,7 @@ _embedding_dim = 384
 # ── THREADING & CONCURRENCY CONTROL STRUCTURES ────────────────────────────────
 _model_init_lock = threading.Lock()   
 _throttle_lock   = threading.Lock()   
-_gemini_semaphore = threading.Semaphore(2)  # Limits parallel queries to Gemini
+_gemini_semaphore = threading.Semaphore(4)  # Expanded concurrency headroom
 
 def get_embedding_model():
     """Thread-safe lazy-initializer for local SentenceTransformer weights."""
@@ -85,7 +85,6 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
     docs_disk_path  = os.path.join(DATA_DIR, f"docs_{key}.json")
     sum_disk_path   = os.path.join(DATA_DIR, f"summary_{key}.json")
 
-    # Fast-Path: Instantly pull compiled indices from local disk storage if found
     if os.path.exists(index_disk_path) and os.path.exists(docs_disk_path) and os.path.exists(sum_disk_path):
         print(f"  [FAISS Disk Cache] Loading index artifacts for {key}...")
         _vector_indexes[key] = faiss.read_index(index_disk_path)
@@ -107,23 +106,27 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         df["skills_found"] = [[] for _ in range(len(df))]
 
     docs = []
-    for _, row in df.head(300).iterrows():
+    # Upgraded processing window to scan up to 600 records for deep data variety
+    for _, row in df.head(600).iterrows():
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
         desc_raw = str(row.get("description", "")).replace("\n", " ").strip()
         
-        # TOKEN OPTIMIZATION: Bumped from 120 to 400 characters. 
-        # Delivers rich operational context without flooding the prompt layout.
-        desc_snippet = desc_raw[:400] + "..." if len(desc_raw) > 400 else desc_raw
+        # ROBUSTNESS UPGRADE: Expanded snapshot size from 400 to 1500 characters.
+        # Captures rich descriptions, requirements, and full operational scope.
+        desc_snippet = desc_raw[:1500] + "..." if len(desc_raw) > 1500 else desc_raw
         
         text = (
             f"Job: {row.get('title', 'Unknown')} @ {row.get('company', 'Unknown')}\n"
             f"Loc: {row.get('location_city', 'Unknown')} | Remote: {row.get('is_remote', False)}\n"
-            f"Skills: {skills}\n"
-            f"Tasks: {desc_snippet}"
+            f"Skills Required: {skills}\n"
+            f"Core Responsibilities: {desc_snippet}"
         )
         docs.append(Document(
             page_content=text,
-            metadata={"title": str(row.get("title", "")).lower(), "company": str(row.get("company", "")).lower()}
+            metadata={
+                "title": str(row.get('title', '')).lower().strip(), 
+                "company": str(row.get('company', '')).lower().strip()
+            }
         ))
 
     embed_engine = get_embedding_model()
@@ -137,8 +140,8 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
 
     total = len(df)
     remote_pct = round(df["is_remote"].mean() * 100, 1) if total else 0
-    top_skills = [s for s, _ in Counter([s for r in df["skills_found"] for s in r]).most_common(15)]
-    summary_text = f"STATS SUMMARY: Unique jobs={total}, Remote={remote_pct}%\nTop Skills: {', '.join(top_skills)}\n"
+    top_skills = [s for s, _ in Counter([s for r in df["skills_found"] for s in r]).most_common(20)]
+    summary_text = f"STATS SUMMARY: Unique jobs={total}, Remote={remote_pct}%\nTop Skills demanded this season: {', '.join(top_skills)}\n"
 
     _vector_indexes[key] = index
     _doc_lookups[key]    = docs
@@ -156,39 +159,43 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         print(f"  [Disk Storage Warn] Skipping file serialization: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SEARCH AND INFERENCE CHAINS WITH EXPONENTIAL BACKOFF RETRIES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── SEARCH AND INFERENCE CHAINS WITH EXPONENTIAL BACKOFF RETRIES ─────────────────
 
-# TOKEN OPTIMIZATION: System instructions strictly command formatting structural bounds.
 _SYSTEM = (
-    "You are Co-operator AI, an assistant for Canadian co-op job analytics.\n"
-    "Context rules:\n"
-    "- Give short, direct answers with clean formatting.\n"
-    "- If listing specific jobs, use a complete bullet list matching this format exactly:\n"
-    "  * [Job Title] at [Company Name] - [Location Summary]\n"
-    "- CRITICAL FORMATTING RULE: Always complete bullet points fully. Never end a sentence mid-line or stop output mid-word.\n"
-    "- TOKEN CONTROL: Rather than returning a partial or truncated bullet item, reduce the total number of jobs you list to fit neatly within your token allowance.\n"
-    "- If query needs macro statistics or generic metrics, rely entirely on the STATS SUMMARY section.\n"
-    "Data:\n{context}"
+    "You are Co-operator AI, an advanced analytical assistant for Canadian co-op job markets.\n"
+    "Context Operational Rules:\n"
+    "- Provide clear, descriptive, and comprehensive answers backed strictly by the provided text data.\n"
+    "- If the user asks for macro insights, metrics, trends, or top skills, prioritize the values in the STATS SUMMARY section.\n"
+    "- When listing target jobs, format them clearly as clean bullet points:\n"
+    "  * [Job Title] at [Company Name] - [Location/Remote status]\n"
+    "    -> Core Scope: Brief technical highlight of responsibilities or expected skills.\n"
+    "- Always complete your formatting blocks fully. Never truncate mid-sentence or mid-bullet point.\n"
+    "Data Context:\n{context}"
 )
 
 def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
     client = _genai.Client(api_key=api_key)
     key = f"{season}_{year}"
-    stats_keywords = {"top skills", "statistics", "most common", "distribution", "percent", "how many", "trend", "total"}
+    
+    stats_keywords = {
+        "top skills", "skills to learn", "statistics", "most common", "distribution", 
+        "percent", "how many", "trend", "total", "demanded skills", "what skills"
+    }
 
     def _retrieve(inputs: dict) -> dict:
         q_lower = inputs["question"].lower()
         index = _vector_indexes.get(key)
         all_docs = _doc_lookups.get(key, [])
+        
+        # Capture stats summary text context if any structural keywords hit
         summary_payload = _summaries.get(key, "") if any(k in q_lower for k in stats_keywords) else ""
 
         matched_chunks = []
         if index is not None and all_docs:
-            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "me", "my", "do", "go", "no", "so", "or", "as", "if"}
+            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "me", "my", "do", "go", "no", "so", "or", "as", "if", "for", "with"}
             words = [w for w in q_lower.split() if len(w) >= 2 and w not in ignore_words]
             
+            # Robust boundary checks for precise entity extraction (e.g., 'TD', 'RBC')
             company_filters = [
                 d for d in all_docs 
                 if any(re.search(rf'\b{re.escape(w)}\b', d.metadata["company"]) for w in words)
@@ -203,24 +210,31 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
                 faiss.normalize_L2(q_emb)
                 
                 scores = np.dot(sub_embs, q_emb.T).flatten()
-                # TOKEN OPTIMIZATION: Evaluates k=6 candidates. Generates structural completeness
-                # without blowing out the input token billing thresholds.
-                for idx in np.argsort(-scores)[:6]:
-                    if scores[idx] >= 0.15:
+                # ROBUSTNESS UPGRADE: Pull up to 8 exact match company listings if available
+                for idx in np.argsort(-scores)[:8]:
+                    if scores[idx] >= 0.12:
                         matched_chunks.append(company_filters[idx].page_content)
             else:
                 q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
-                # TOKEN OPTIMIZATION: Uniform k=6 parameter bound
-                scores, indices = index.search(q_emb, k=6)
+                
+                # ROBUSTNESS UPGRADE: Expanded K depth from 6 to 12.
+                # Gathers wide semantic coverage across your newly enriched descriptions.
+                scores, indices = index.search(q_emb, k=12)
                 for sim_score, idx in zip(scores[0], indices[0]):
-                    if idx != -1 and sim_score >= 0.20:
+                    if idx != -1 and sim_score >= 0.18:
                         matched_chunks.append(all_docs[idx].page_content)
 
         if not matched_chunks and not summary_payload:
-            matched_chunks = [d.page_content for d in all_docs[:2]]
+            matched_chunks = [d.page_content for d in all_docs[:3]]
 
-        inputs["context"] = (f"{summary_payload}\n\n" if summary_payload else "") + "MATCHED JOBS:\n" + "\n---\n".join(matched_chunks)
+        # Consolidate text data structure cleanly with absolute explicit tags
+        context_str = ""
+        if summary_payload:
+            context_str += f"STATS SUMMARY:\n{summary_payload}\n\n"
+        
+        context_str += "MATCHED JOBS:\n" + "\n---\n".join(matched_chunks)
+        inputs["context"] = context_str
         return inputs
 
     def _generate(inputs: dict) -> str:
@@ -229,15 +243,14 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
             role = "user" if msg.__class__.__name__ == "HumanMessage" else "model"
             contents.append(_genai_types.Content(role=role, parts=[_genai_types.Part.from_text(text=msg.content)]))
 
-        contents.append(_genai_types.Content(role="user", parts=[_genai_types.Part.from_text(text=f"Context:\n{inputs['context']}\n\nQ: {inputs['question']}")]))
+        contents.append(_genai_types.Content(role="user", parts=[_genai_types.Part.from_text(text=f"Context Documents:\n{inputs['context']}\n\nUser Question: {inputs['question']}")]))
         
-        # TOKEN OPTIMIZATION: Bumped output headroom constraint to 450.
-        # Safely satisfies full text lines without allowing wasteful chat loops.
-        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.15, max_output_tokens=450)
+        # ROBUSTNESS UPGRADE: Max output headroom scaled safely to 750 tokens.
+        # Gives the model the room to construct beautiful, deeply rich insights without truncating.
+        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.20, max_output_tokens=750)
         
         with _gemini_semaphore:
             models_to_try = [GEMINI_MODEL, GEMINI_MODEL_FALLBACK]
-            
             for model_target in models_to_try:
                 max_retries = 3
                 backoff_delay = 1.0  
@@ -245,29 +258,20 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
                 for attempt in range(max_retries):
                     try:
                         response = client.models.generate_content(
-                            model=model_target, 
-                            contents=contents, 
-                            config=cfg
+                            model=model_target, contents=contents, config=cfg
                         )
                         return response.text
                     except Exception as e:
                         err_msg = str(e).lower()
-                        
                         if "429" in err_msg or "exhausted" in err_msg or "rate_limit" in err_msg:
                             if attempt == max_retries - 1:
-                                print(f"  🚨 [Quota Exhausted] Failed after {max_retries} bounds on model {model_target}.")
                                 break  
-                            
-                            print(f"  ⚠️ [429 Rate Limit] Hit on retry phase {attempt + 1}. Backing off for {backoff_delay}s...")
                             time.sleep(backoff_delay)
                             backoff_delay *= 2.0  
                         else:
                             raise e  
                             
-        raise HTTPException(
-            status_code=429, 
-            detail="The AI engine is experiencing a high volume of traffic. Please wait a moment before trying again."
-        )
+        raise HTTPException(status_code=429, detail="Upstream inference models are saturated. Retry your query shortly.")
 
     return RunnableLambda(lambda inputs: _generate(_retrieve(inputs)))
 
@@ -307,13 +311,11 @@ def ask(question: str, season: str, year: int, session_id: str = "default_user")
     cache_key = f"{key}_{session_id}_{normalized_q}"
     
     if cache_key in _response_cache:
-        print("  ⚡ [Cache Hit] Safely returning output context block from string cache map.")
         return _response_cache[cache_key]
 
     if key not in _rag_chains:
         index_disk_path = os.path.join(DATA_DIR, f"faiss_{key}.index")
         if os.path.exists(index_disk_path):
-            print(f"  [Hot Boot] Re-instantiating memory mapping from disk cache for {key}...")
             if not init_rag(season, year):
                 return f"Error loading index: {_init_errors.get(key)}"
         else:
@@ -321,16 +323,13 @@ def ask(question: str, season: str, year: int, session_id: str = "default_user")
 
     if session_id not in _session_histories[key]:
         _session_histories[key][session_id] = deque(maxlen=4)
-        
     history_window = _session_histories[key][session_id]
 
     try:
         print(f"  🤖 [LLM Invoke] Processing query for session '{session_id}' via {GEMINI_MODEL}")
         answer = _rag_chains[key].invoke({"question": question, "chat_history": list(history_window)})
         
-        # Post-processing structural validation guard
         if answer.strip().endswith("/") or answer.strip().endswith("-"):
-            print("  ⚠️ [Post-Processing Guard] Incomplete text boundary detected. Cleaning line tails...")
             answer = answer.strip().rstrip("/-").strip() + "..."
             
         history_window.append(HumanMessage(content=question))
@@ -374,8 +373,7 @@ async def chat_endpoint(req: ChatRequest):
     with _throttle_lock:
         if throttle_key in _active_chats:
             last_time = _active_chats[throttle_key]
-            if now - last_time < 2.0:  
-                print("  🛑 [Throttled Lock] Concurrent duplicate query caught and dropped on backend!")
+            if now - last_time < 1.5:  
                 raise HTTPException(status_code=429, detail="Duplicate client operation dropped.")
         _active_chats[throttle_key] = now
 
