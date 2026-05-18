@@ -79,6 +79,14 @@ _active_chats:   dict = {}
 #  DEDICATED BUILD ENGINE
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _is_summary_valid(summary: str) -> bool:
+    """Validates that a cached summary actually contains top skills data."""
+    match = re.search(r"Top Skills demanded this season:\s*(.+)", summary)
+    if not match or not match.group(1).strip():
+        return False
+    return True
+
+
 def _build_vector_store(parquet_path: str, season: str, year: int):
     key = f"{season}_{year}"
     index_disk_path = os.path.join(DATA_DIR, f"faiss_{key}.index")
@@ -86,30 +94,39 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
     sum_disk_path   = os.path.join(DATA_DIR, f"summary_{key}.json")
 
     if os.path.exists(index_disk_path) and os.path.exists(docs_disk_path) and os.path.exists(sum_disk_path):
-        print(f"  [FAISS Disk Cache] Loading index artifacts for {key}...")
-        _vector_indexes[key] = faiss.read_index(index_disk_path)
-        with open(docs_disk_path, "r", encoding="utf-8") as f:
-            cached_docs = json.load(f)
-            _doc_lookups[key] = [Document(page_content=d["p"], metadata=d["m"]) for d in cached_docs]
-        with open(sum_disk_path, "r", encoding="utf-8") as f:
-            _summaries[key] = json.load(f)["summary"]
-        return
+        try:
+            with open(sum_disk_path, "r", encoding="utf-8") as f:
+                cached_summary = json.load(f)["summary"]
+
+            if _is_summary_valid(cached_summary):
+                print(f"  [FAISS Disk Cache] Loading index artifacts for {key}...")
+                _vector_indexes[key] = faiss.read_index(index_disk_path)
+                with open(docs_disk_path, "r", encoding="utf-8") as f:
+                    cached_docs = json.load(f)
+                    _doc_lookups[key] = [Document(page_content=d["p"], metadata=d["m"]) for d in cached_docs]
+                _summaries[key] = cached_summary
+                return
+            else:
+                print(f"  [FAISS Cache] ⚠️ Stale/empty summary detected for {key}. Invalidating cache...")
+                for stale_path in [index_disk_path, docs_disk_path, sum_disk_path]:
+                    try: os.remove(stale_path)
+                    except OSError: pass
+        except Exception as e:
+            print(f"  [FAISS Cache] ⚠️ Cache read error for {key}: {e}. Rebuilding...")
 
     print(f"  [⚠️ WARN] Index missing for {key}. Compiling from Parquet dataset...")
     if not os.path.exists(parquet_path):
         raise FileNotFoundError(f"Parquet data file missing at: {parquet_path}")
 
     df = pd.read_parquet(parquet_path)
-    
-    # DATA CORRECTION: Robustly handle structural parsing anomalies across the series
+
     def normalize_skills(val):
         if isinstance(val, (set, list, np.ndarray)):
             return [str(item).strip() for item in val if str(item).strip()]
         if isinstance(val, str) and val.strip():
-            # If stored as a stringified JSON array or comma-separated tokens, unpack it
             if val.startswith('[') and val.endswith(']'):
                 try: return [s.strip("'\" ") for s in json.loads(val)]
-                except: pass
+                except Exception: pass
             return [s.strip() for s in val.split(',') if s.strip()]
         return []
 
@@ -123,7 +140,7 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         skills = ", ".join(row["skills_found"]) if row["skills_found"] else "not specified"
         desc_raw = str(row.get("description", "")).replace("\n", " ").strip()
         desc_snippet = desc_raw[:1500] + "..." if len(desc_raw) > 1500 else desc_raw
-        
+
         text = (
             f"Job: {row.get('title', 'Unknown')} @ {row.get('company', 'Unknown')}\n"
             f"Loc: {row.get('location_city', 'Unknown')} | Remote: {row.get('is_remote', False)}\n"
@@ -133,8 +150,9 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         docs.append(Document(
             page_content=text,
             metadata={
-                "title": str(row.get('title', '')).lower().strip(), 
-                "company": str(row.get('company', '')).lower().strip()
+                "title": str(row.get('title', '')).lower().strip(),
+                "company": str(row.get('company', '')).lower().strip(),
+                "location": str(row.get('location_city', '')).lower().strip()
             }
         ))
 
@@ -149,18 +167,17 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
 
     total = len(df)
     remote_pct = round(df["is_remote"].mean() * 100, 1) if total else 0
-    
-    # DATA DEFENSE: Fall back to scanning the entire dataset if the first 600 rows are sparse
+
     all_skills = [s for r in df["skills_found"] for s in r if s]
     if not all_skills:
-        # Fallback keyword extraction from job titles if skills column is completely blank
         all_skills = [w.capitalize() for t in df["title"].dropna() for w in str(t).split() if len(w) > 4]
-        
+
     top_skills = [s for s, _ in Counter(all_skills).most_common(20)]
-    
-    # Safeguard against rendering an empty statistics block
     skills_string = ", ".join(top_skills) if top_skills else "General Technical/Communication Skillsets"
-    summary_text = f"STATS SUMMARY: Unique jobs={total}, Remote={remote_pct}%\nTop Skills demanded this season: {skills_string}\n"
+    summary_text = (
+        f"STATS SUMMARY: Unique jobs={total}, Remote={remote_pct}%\n"
+        f"Top Skills demanded this season: {skills_string}\n"
+    )
 
     _vector_indexes[key] = index
     _doc_lookups[key]    = docs
@@ -184,7 +201,8 @@ _SYSTEM = (
     "You are Co-operator AI, an advanced analytical assistant for Canadian co-op job markets.\n"
     "Context Operational Rules:\n"
     "- Provide clear, descriptive, and comprehensive answers backed strictly by the provided text data.\n"
-    "- If the user asks for macro insights, metrics, trends, or top skills, prioritize the values in the STATS SUMMARY section.\n"
+    "- If the user specifies a particular location (e.g., 'Brampton', 'Toronto') or constraint, carefully filter the provided MATCHED JOBS block for matches.\n"
+    "- If no jobs matching that exact geographic location exist within the context, clearly summarize the roles that *are* available, noting that a local match wasn't found.\n"
     "- When listing target jobs, format them clearly as clean bullet points:\n"
     "  * [Job Title] at [Company Name] - [Location/Remote status]\n"
     "    -> Core Scope: Brief technical highlight of responsibilities or expected skills.\n"
@@ -205,49 +223,45 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
         q_lower = inputs["question"].lower()
         index = _vector_indexes.get(key)
         all_docs = _doc_lookups.get(key, [])
-        
-        # Capture stats summary text context if any structural keywords hit
         summary_payload = _summaries.get(key, "") if any(k in q_lower for k in stats_keywords) else ""
 
         matched_chunks = []
         if index is not None and all_docs:
-            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "me", "my", "do", "go", "no", "so", "or", "as", "if", "for", "with"}
-            words = [w for w in q_lower.split() if len(w) >= 2 and w not in ignore_words]
-            
-            # Robust boundary checks for precise entity extraction (e.g., 'TD', 'RBC')
-            company_filters = [
-                d for d in all_docs 
-                if any(re.search(rf'\b{re.escape(w)}\b', d.metadata["company"]) for w in words)
-            ]
-            
             embed_engine = get_embedding_model()
-            if company_filters:
-                sub_texts = [d.page_content for d in company_filters]
-                sub_embs = embed_engine.encode(sub_texts, show_progress_bar=False).astype("float32")
-                faiss.normalize_L2(sub_embs)
-                q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
-                faiss.normalize_L2(q_emb)
+            q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
+            faiss.normalize_L2(q_emb)
+            
+            # FIXED: Perform a single-pass, uniform semantic retrieval execution.
+            # Grabs 15 deep context candidates with zero dynamic re-encoding lag.
+            scores, indices = index.search(q_emb, k=15)
+            
+            candidates = []
+            for sim_score, idx in zip(scores[0], indices[0]):
+                if idx != -1 and sim_score >= 0.14:
+                    candidates.append(all_docs[idx])
+            
+            # Look for explicit location or company keywords to optimize context placement
+            ignore_words = {"jobs", "near", "find", "me", "in", "at", "to", "for", "with", "coop"}
+            search_tokens = [w for w in q_lower.split() if w not in ignore_words and len(w) > 1]
+            
+            boosted = []
+            regular = []
+            for doc in candidates:
+                content_lower = doc.page_content.lower()
+                meta_comp = doc.metadata.get("company", "")
+                meta_loc = doc.metadata.get("location", "")
                 
-                scores = np.dot(sub_embs, q_emb.T).flatten()
-                # ROBUSTNESS UPGRADE: Pull up to 8 exact match company listings if available
-                for idx in np.argsort(-scores)[:8]:
-                    if scores[idx] >= 0.12:
-                        matched_chunks.append(company_filters[idx].page_content)
-            else:
-                q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
-                faiss.normalize_L2(q_emb)
-                
-                # ROBUSTNESS UPGRADE: Expanded K depth from 6 to 12.
-                # Gathers wide semantic coverage across your newly enriched descriptions.
-                scores, indices = index.search(q_emb, k=12)
-                for sim_score, idx in zip(scores[0], indices[0]):
-                    if idx != -1 and sim_score >= 0.18:
-                        matched_chunks.append(all_docs[idx].page_content)
+                if any(t in content_lower or t in meta_comp or t in meta_loc for t in search_tokens):
+                    boosted.append(doc.page_content)
+                else:
+                    regular.append(doc.page_content)
+            
+            # Combine documents up to an optimal depth limit of 12
+            matched_chunks = (boosted + regular)[:12]
 
         if not matched_chunks and not summary_payload:
-            matched_chunks = [d.page_content for d in all_docs[:3]]
+            matched_chunks = [d.page_content for d in all_docs[:4]]
 
-        # Consolidate text data structure cleanly with absolute explicit tags
         context_str = ""
         if summary_payload:
             context_str += f"STATS SUMMARY:\n{summary_payload}\n\n"
@@ -264,9 +278,7 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
 
         contents.append(_genai_types.Content(role="user", parts=[_genai_types.Part.from_text(text=f"Context Documents:\n{inputs['context']}\n\nUser Question: {inputs['question']}")]))
         
-        # ROBUSTNESS UPGRADE: Max output headroom scaled safely to 750 tokens.
-        # Gives the model the room to construct beautiful, deeply rich insights without truncating.
-        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.20, max_output_tokens=750)
+        cfg = _genai_types.GenerateContentConfig(system_instruction=_SYSTEM, temperature=0.15, max_output_tokens=750)
         
         with _gemini_semaphore:
             models_to_try = [GEMINI_MODEL, GEMINI_MODEL_FALLBACK]
