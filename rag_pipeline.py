@@ -133,10 +133,18 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         _vector_indexes[key] = faiss.read_index(index_disk_path)
         with open(docs_disk_path, "r", encoding="utf-8") as f:
             cached_docs = json.load(f)
+        # Stale cache guard: if metadata is missing new fields, force a rebuild
+        if cached_docs and "is_remote" not in cached_docs[0].get("m", {}):
+            print(f"  [Cache Stale] Metadata schema outdated for {key} — rebuilding index...")
+            _vector_indexes.pop(key, None)
+            for path in [index_disk_path, docs_disk_path, sum_disk_path]:
+                try: os.remove(path)
+                except: pass
+        else:
             _doc_lookups[key] = [Document(page_content=d["p"], metadata=d["m"]) for d in cached_docs]
-        with open(sum_disk_path, "r", encoding="utf-8") as f:
-            _summaries[key] = json.load(f)["summary"]
-        return
+            with open(sum_disk_path, "r", encoding="utf-8") as f:
+                _summaries[key] = json.load(f)["summary"]
+            return
 
     print(f"  [⚠️ WARN] Index missing for {key}. Compiling from Parquet dataset...")
     if not os.path.exists(parquet_path):
@@ -163,7 +171,12 @@ def _build_vector_store(parquet_path: str, season: str, year: int):
         )
         docs.append(Document(
             page_content=text,
-            metadata={"title": str(row.get("title", "")).lower(), "company": str(row.get("company", "")).lower()}
+            metadata={
+                "title":     str(row.get("title", "")).lower(),
+                "company":   str(row.get("company", "")).lower(),
+                "is_remote": bool(row.get("is_remote", False)),
+                "location":  str(row.get("location_city", "")).lower(),
+            }
         ))
 
     embed_engine = get_embedding_model()
@@ -227,38 +240,90 @@ def _build_chain(season: str, year: int, api_key: str) -> RunnableLambda:
 
         matched_chunks = []
         if index is not None and all_docs:
-            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "me", "my", "do", "go", "no", "so", "or", "as", "if"}
-            words = [w for w in q_lower.split() if len(w) >= 2 and w not in ignore_words]
+
+            # ── Step 1: Intent detection — remote / location queries ──────────
+            remote_intent = any(w in q_lower for w in ["remote", "work from home", "wfh", "hybrid"])
+            location_match = None
+            for doc in all_docs:
+                loc = doc.metadata.get("location", "")
+                if loc and len(loc) >= 3 and loc in q_lower:
+                    location_match = loc
+                    break
+
+            # Pre-filter candidate pool by metadata attribute when intent is clear
+            if remote_intent:
+                candidate_pool = [d for d in all_docs if d.metadata.get("is_remote") is True]
+                if not candidate_pool:
+                    inputs["context"] = "MATCHED JOBS:\nNo remote jobs are available in this season's dataset."
+                    return inputs
+            elif location_match:
+                candidate_pool = [d for d in all_docs if location_match in d.metadata.get("location", "")]
+            else:
+                candidate_pool = all_docs
+
+            # ── Step 2: Company filter — only on words that could be company names ──
+            # Broad intent/skill words are excluded so they don't poison company matching
+            intent_words = {
+                "remote", "job", "jobs", "role", "roles", "position", "positions",
+                "work", "hire", "hiring", "find", "show", "list", "any", "what",
+                "which", "where", "how", "the", "are", "there", "available", "open",
+                "looking", "need", "want", "give", "me", "can", "you", "wfh", "hybrid",
+                "internship", "co-op", "coop", "full", "time", "part", "contract",
+                "top", "best", "good", "great", "python", "java", "data", "software",
+                "engineering", "science", "analyst", "developer", "designer", "manager",
+            }
+            ignore_words = {"in", "at", "to", "on", "by", "of", "an", "is", "my", "do",
+                            "go", "no", "so", "or", "as", "if"} | intent_words
+
+            words = [w for w in q_lower.split() if len(w) >= 3 and w not in ignore_words]
 
             company_filters = [
-                d for d in all_docs
-                if any(re.search(rf'\b{re.escape(w)}\b', d.metadata["company"]) for w in words)
+                d for d in candidate_pool
+                if words and any(re.search(rf'\b{re.escape(w)}\b', d.metadata["company"]) for w in words)
             ]
 
             embed_engine = get_embedding_model()
-            if company_filters:
+            search_pool = company_filters if company_filters else candidate_pool
+
+            # ── Step 3: Similarity search over the appropriate pool ───────────
+            if len(search_pool) <= 20:
+                # Small pool (e.g. filtered remote jobs): score all directly, skip FAISS
+                q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
+                faiss.normalize_L2(q_emb)
+                sub_texts = [d.page_content for d in search_pool]
+                sub_embs = embed_engine.encode(sub_texts, show_progress_bar=False).astype("float32")
+                faiss.normalize_L2(sub_embs)
+                scores = np.dot(sub_embs, q_emb.T).flatten()
+                for idx in np.argsort(-scores)[:8]:
+                    matched_chunks.append(search_pool[idx].page_content)
+
+            elif company_filters:
+                # Company-scoped search
                 sub_texts = [d.page_content for d in company_filters]
                 sub_embs = embed_engine.encode(sub_texts, show_progress_bar=False).astype("float32")
                 faiss.normalize_L2(sub_embs)
                 q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
-
                 scores = np.dot(sub_embs, q_emb.T).flatten()
                 for idx in np.argsort(-scores)[:6]:
-                    if scores[idx] >= 0.15:
+                    if scores[idx] >= 0.10:
                         matched_chunks.append(company_filters[idx].page_content)
+
             else:
+                # Full FAISS search — lowered threshold from 0.20 → 0.12 for broader recall
                 q_emb = embed_engine.encode([inputs["question"]]).astype("float32")
                 faiss.normalize_L2(q_emb)
-                scores, indices = index.search(q_emb, k=6)
+                scores, indices = index.search(q_emb, k=8)
+                pool_set = set(id(d) for d in candidate_pool)
                 for sim_score, idx in zip(scores[0], indices[0]):
-                    if idx != -1 and sim_score >= 0.20:
-                        matched_chunks.append(all_docs[idx].page_content)
+                    if idx != -1 and sim_score >= 0.12:
+                        doc = all_docs[idx]
+                        if candidate_pool is all_docs or id(doc) in pool_set:
+                            matched_chunks.append(doc.page_content)
 
         if not matched_chunks and not summary_payload:
             matched_chunks = [d.page_content for d in all_docs[:2]]
 
-        # FIX: Assemble context then hard-cap at MAX_CONTEXT_CHARS to prevent token blowout
         raw_context = (f"{summary_payload}\n\n" if summary_payload else "") + "MATCHED JOBS:\n" + "\n---\n".join(matched_chunks)
         if len(raw_context) > MAX_CONTEXT_CHARS:
             raw_context = raw_context[:MAX_CONTEXT_CHARS] + "\n...[context truncated]"
