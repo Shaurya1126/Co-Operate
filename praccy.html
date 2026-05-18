@@ -943,12 +943,13 @@ input:focus, select:focus {
   .logo { font-size: 1.15rem; }
   nav { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 0.25rem; }
   nav::-webkit-scrollbar { display: none; }
-  nav button { font-size: 0.72rem; padding: 0.4rem 0.7rem; white-space: nowrap; }
+  nav button { font-size: 0.72rem; padding: 0.4rem 0.7rem; white-space: nowrap; min-height: 36px; }
 
   /* ── SEASON BAR ── */
   .season-bar { padding: 0.45rem 1rem; }
   .season-bar-inner { flex-wrap: wrap; gap: 0.5rem; }
   #date-picker-wrap { margin-left: 0 !important; width: 100%; }
+  #date-picker { width: 100% !important; }
 
   /* ── MAIN ── */
   main { padding: 1rem; }
@@ -990,6 +991,7 @@ input:focus, select:focus {
   footer { padding: 1.75rem 1rem 1.5rem; }
   .footer-inner { flex-direction: column; align-items: flex-start; }
   .footer-right { align-items: flex-start; }
+  .footer-links { flex-wrap: wrap; gap: 0.75rem; }
 
   /* ── CHAT WINDOW ── */
   .chat-window {
@@ -1004,6 +1006,66 @@ input:focus, select:focus {
 
   /* ── SECTION TITLE ── */
   .section-title { font-size: 1.4rem; }
+
+  /* ── INSIGHTS CHARTS ── */
+  #donutChart, #remoteChart, #companyChart, #timeChart, #fitChart {
+    max-width: 100%;
+  }
+  /* chart containers with fixed heights — keep heights but ensure full width */
+  .card [style*="height:220px"],
+  .card [style*="height:260px"],
+  .card [style*="height:180px"] {
+    height: 200px !important;
+  }
+  /* skill filter row in insights */
+  #skill-type-filter, #skill-count-filter { width: 100% !important; }
+  .card > div[style*="display:flex"][style*="gap:0.75rem"] { flex-direction: column; }
+
+  /* ── ABOUT / HOW-IT-WORKS GRIDS (inline style grids) ── */
+  /* 3-col grid in About → 1-col */
+  div[style*="grid-template-columns:repeat(3,1fr)"] { grid-template-columns: 1fr !important; }
+  /* 2-col feature grid in About → 1-col */
+  div[style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
+
+  /* ── REPORT FORM ── */
+  /* Step 1 & 3 button rows */
+  div[style*="justify-content:flex-end"] { flex-wrap: wrap; }
+  .btn { min-height: 44px; }
+
+  /* ── ABOUT HERO title ── */
+  div[style*="font-size:2rem"][style*="font-weight:800"] { font-size: 1.5rem !important; }
+
+  /* ── JOBS filter inputs (inline width styles) ── */
+  #job-search { width: 100% !important; }
+  #job-skill-filter { width: 100% !important; }
+  #job-role-filter { width: 100% !important; }
+
+  /* ── SEASON PILLS wrap nicely ── */
+  .season-pills { flex-wrap: wrap; }
+  .season-pill { min-height: 34px; }
+
+  /* ── LOADING BOX ── */
+  .loading-box { padding: 1.75rem 1.5rem; width: 90vw; max-width: 320px; }
+
+  /* ── CHIP INPUT ── */
+  .chip-input { min-width: 80px; font-size: 16px; /* prevent iOS zoom */ }
+
+  /* ── PREVENT IOS ZOOM on inputs/selects ── */
+  input, select, textarea { font-size: 16px !important; }
+  .chat-input { font-size: 16px !important; }
+
+  /* ── TREND ITEM text wrap ── */
+  .trend-item { flex-wrap: wrap; gap: 0.4rem; }
+
+  /* ── SCRAPE LOG ── */
+  .scrape-log { font-size: 0.72rem; padding: 0.875rem 1rem; }
+
+  /* ── DOWNLOAD BANNER ── */
+  .download-banner { padding: 1.5rem 1.25rem; }
+  .download-banner h3 { font-size: 1.1rem; }
+
+  /* ── ABOUT page inner container ── */
+  #section-about > div { margin: 1.5rem auto; padding: 0; }
 }
 
 footer {
@@ -1063,6 +1125,59 @@ footer {
   letter-spacing: 0.04em;
   text-align: center;
 }
+
+/* ── CUSTOM DATE PILL PICKER ─────────────────────────────────────────── */
+#date-pill-row::-webkit-scrollbar { display: none; }
+
+.date-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.26rem 0.75rem;
+  border-radius: 100px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: transparent;
+  color: rgba(247,244,239,0.5);
+  font-size: 0.76rem;
+  font-weight: 400;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.16s;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.date-pill:hover {
+  background: rgba(255,255,255,0.09);
+  color: rgba(247,244,239,0.85);
+  border-color: rgba(255,255,255,0.25);
+}
+.date-pill.active {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: white;
+  font-weight: 500;
+}
+.date-pill-latest {
+  display: inline-block;
+  background: rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.9);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.38rem;
+  border-radius: 100px;
+  line-height: 1.4;
+}
+.date-pill.active .date-pill-latest {
+  background: rgba(255,255,255,0.25);
+}
+@media(max-width:768px) {
+  #date-picker-wrap { margin-left: 0 !important; width: 100%; justify-content: flex-start !important; }
+  #date-pill-row { max-width: 100% !important; }
+}
 </style>
 </head>
 <body>
@@ -1094,19 +1209,9 @@ footer {
   <div class="season-bar-inner" style="flex-wrap:wrap;gap:0.75rem;">
     <span class="season-bar-label">Season</span>
     <div class="season-pills" id="season-pills-container"></div>
-    <div id="date-picker-wrap" style="display:none;align-items:center;gap:0.5rem;margin-left:auto">
-      <span class="season-bar-label">Viewing</span>
-      <select id="date-picker" onchange="onDateChange()"
-        style="background:rgba(255,255,255,0.1);border:1.5px solid rgba(255,255,255,0.2);
-               color:white;border-radius:8px;padding:0.3rem 0.6rem;font-size:0.8rem;
-               font-family:'DM Sans',sans-serif;cursor:pointer">
-      </select>
-      <button onclick="clearDateFilter()"
-        style="background:rgba(255,255,255,0.1);border:1.5px solid rgba(255,255,255,0.2);
-               color:rgba(255,255,255,0.7);border-radius:8px;padding:0.3rem 0.7rem;
-               font-size:0.75rem;font-family:'DM Sans',sans-serif;cursor:pointer">
-        Latest
-      </button>
+    <div id="date-picker-wrap" style="display:none;align-items:center;gap:0.6rem;margin-left:auto;min-width:0;flex:1;justify-content:flex-end">
+      <span class="season-bar-label" style="flex-shrink:0">Snapshot</span>
+      <div id="date-pill-row" style="display:flex;gap:0.35rem;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px;max-width:520px;flex-shrink:1"></div>
     </div>
   </div>
 </div>
@@ -2634,42 +2739,65 @@ function renderInsightFit(jobs) {
 }
 
 // ── DATE FILTER ───────────────────────────────────────────────────────────────
+let _availableDates = [];
+
 async function loadAvailableDates() {
   const wrap = document.getElementById('date-picker-wrap');
-  const sel  = document.getElementById('date-picker');
+  const row  = document.getElementById('date-pill-row');
   try {
     const res = await fetch(`${API}/api/available-dates/${currentSeason}/${currentSeasonYear}`).then(r => r.json());
-    const dates = res.dates || [];
-    if (dates.length <= 1) { wrap.style.display = 'none'; return; }
-    sel.innerHTML = dates.map((d, i) =>
-      `<option value="${d}">${i === 0 ? `${d} (latest)` : d}</option>`
-    ).join('');
-    // restore previously selected date if still available
-    if (currentDate && dates.includes(currentDate)) {
-      sel.value = currentDate;
-    } else {
-      currentDate = null;
-      sel.value = dates[0];
-    }
+    _availableDates = res.dates || [];
+    if (_availableDates.length <= 1) { wrap.style.display = 'none'; return; }
+    renderDatePills();
     wrap.style.display = 'flex';
   } catch(e) {
     wrap.style.display = 'none';
   }
 }
 
-function onDateChange() {
-  const sel = document.getElementById('date-picker');
-  const chosen = sel.value;
-  // index 0 is always latest
-  const isLatest = sel.selectedIndex === 0;
-  currentDate = isLatest ? null : chosen;
+function renderDatePills() {
+  const row = document.getElementById('date-pill-row');
+  row.innerHTML = '';
+  _availableDates.forEach((d, i) => {
+    const isLatest  = i === 0;
+    const isActive  = (isLatest && currentDate === null) || d === currentDate;
+    const label     = isLatest ? formatDateLabel(d) : formatDateLabel(d);
+    const pill = document.createElement('button');
+    pill.className = 'date-pill' + (isActive ? ' active' : '');
+    pill.setAttribute('data-date', d);
+    pill.setAttribute('data-index', i);
+    pill.innerHTML = isLatest
+      ? `${label}<span class="date-pill-latest">Latest</span>`
+      : label;
+    pill.onclick = () => selectDatePill(d, i);
+    row.appendChild(pill);
+  });
+  // scroll active pill into view
+  const active = row.querySelector('.date-pill.active');
+  if (active) active.scrollIntoView({ inline: 'nearest', behavior: 'smooth' });
+}
+
+function formatDateLabel(dateStr) {
+  // dateStr expected as YYYY-MM-DD
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  } catch(e) { return dateStr; }
+}
+
+function selectDatePill(d, index) {
+  currentDate = index === 0 ? null : d;
+  renderDatePills();
   reloadCurrentSection();
+}
+
+function onDateChange() {
+  // legacy stub — no longer used but kept for safety
 }
 
 function clearDateFilter() {
   currentDate = null;
-  const sel = document.getElementById('date-picker');
-  sel.selectedIndex = 0;
+  renderDatePills();
   reloadCurrentSection();
 }
 
